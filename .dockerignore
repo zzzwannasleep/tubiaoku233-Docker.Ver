@@ -1,0 +1,10 @@
+.git
+.github
+.idea
+.venv
+__pycache__
+*.pyc
+.env
+data
+dist
+build

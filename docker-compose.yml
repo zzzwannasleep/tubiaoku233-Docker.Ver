@@ -1,0 +1,14 @@
+services:
+  tubiaoku233:
+    build: .
+    container_name: tubiaoku233
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      APP_DATA_DIR: /app/data
+      PORT: 8000
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    volumes:
+      - ./data:/app/data

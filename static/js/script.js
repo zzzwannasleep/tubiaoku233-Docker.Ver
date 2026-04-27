@@ -1,4 +1,3 @@
-/* ========== 工具函数 ========== */
 function filenameToName(filename) {
   return filename.split(/[\\/]/).pop().replace(/\.[^.]+$/, "");
 }
@@ -13,10 +12,9 @@ function prettySize(bytes) {
 function hidePreview() {
   const previewBox = document.getElementById("batchPreview");
   const previewList = document.getElementById("previewList");
-  if (previewBox && previewList) {
-    previewList.innerHTML = "";
-    previewBox.style.display = "none";
-  }
+  if (!previewBox || !previewList) return;
+  previewList.innerHTML = "";
+  previewBox.style.display = "none";
 }
 
 function hideProgress() {
@@ -30,27 +28,47 @@ function hideProgress() {
   if (progressFile) progressFile.textContent = "";
 }
 
-/* ========== 单张上传 ========== */
+let currentCategory = "default";
+
+function setCategory(category) {
+  currentCategory = category || "default";
+
+  document.querySelectorAll(".folder-btn").forEach((button) => {
+    button.classList.toggle("active", button.dataset.category === currentCategory);
+  });
+
+  const current = document.getElementById("folderCurrent");
+  const active = document.querySelector(`.folder-btn[data-category="${currentCategory}"]`);
+  if (current && active) {
+    current.textContent = `当前分类：${active.dataset.label || currentCategory}`;
+  }
+}
+
+function createFormData(files, name) {
+  const formData = new FormData();
+  files.forEach((file) => formData.append("source", file));
+  if (name) formData.append("name", name);
+  formData.append("category", currentCategory);
+  return formData;
+}
+
 async function uploadSingle() {
   const nameInput = document.getElementById("name");
   const imageInput = document.getElementById("image");
   const messageDiv = document.getElementById("message");
   const resultList = document.getElementById("resultList");
 
-  if (!nameInput || !imageInput || !messageDiv) return;
+  if (!imageInput || !messageDiv) return;
   if (resultList) resultList.innerHTML = "";
 
-  const name = nameInput.value.trim();
   const file = imageInput.files[0];
-
-  if (!name || !file) {
-    messageDiv.textContent = "请输入名称并选择图片！";
+  if (!file) {
+    messageDiv.textContent = "请选择一张图片。";
     return;
   }
 
-  const formData = new FormData();
-  formData.append("source", file);
-  formData.append("name", name);
+  const manualName = (nameInput?.value || "").trim();
+  const formData = createFormData([file], manualName);
 
   messageDiv.textContent = "正在上传...";
   try {
@@ -60,11 +78,12 @@ async function uploadSingle() {
     });
 
     const data = await response.json().catch(() => ({}));
-
     if (response.ok && data.success) {
-      messageDiv.textContent = `上传成功！名称: ${data.name}`;
-      if (resultList) resultList.innerHTML = `<li>✅ <b>${data.name}</b></li>`;
-      nameInput.value = "";
+      messageDiv.textContent = `上传成功：${data.name}`;
+      if (resultList) {
+        resultList.innerHTML = `<li>✅ <b>${data.name}</b> → <a href="${data.url}" target="_blank">${data.url}</a></li>`;
+      }
+      if (nameInput) nameInput.value = "";
       imageInput.value = "";
       hidePreview();
       hideProgress();
@@ -76,13 +95,10 @@ async function uploadSingle() {
   }
 }
 
-/* ========== 批量上传（带进度条） ========== */
 async function uploadBatch() {
   const imageInput = document.getElementById("image");
   const messageDiv = document.getElementById("message");
   const resultList = document.getElementById("resultList");
-
-  // 进度条元素
   const progressWrap = document.getElementById("progressWrap");
   const progressText = document.getElementById("progressText");
   const progressFile = document.getElementById("progressFile");
@@ -92,12 +108,12 @@ async function uploadBatch() {
   if (resultList) resultList.innerHTML = "";
 
   const files = Array.from(imageInput.files || []);
-  if (files.length === 0) {
-    messageDiv.textContent = "请选择图片（可多选）！";
+  if (!files.length) {
+    messageDiv.textContent = "请选择图片（可多选）。";
     return;
   }
   if (files.length === 1) {
-    messageDiv.textContent = "批量上传请至少选择 2 张图片（或用单张上传）。";
+    messageDiv.textContent = "如果只上传一张图，建议直接使用“上传单张”。";
     return;
   }
 
@@ -110,60 +126,50 @@ async function uploadBatch() {
     resultList.appendChild(li);
   }
 
-  // 显示进度条
   if (progressWrap) progressWrap.style.display = "block";
   if (progressFill) progressFill.style.width = "0%";
   if (progressText) progressText.textContent = `0/${files.length}`;
   if (progressFile) progressFile.textContent = "";
 
   try {
-    for (let i = 0; i < files.length; i++) {
-      const f = files[i];
-      const name = filenameToName(f.name);
+    for (let index = 0; index < files.length; index += 1) {
+      const file = files[index];
+      const name = filenameToName(file.name);
 
-      // 更新进度（开始上传当前项）
-      if (progressFile) progressFile.textContent = f.name;
-      if (progressText) progressText.textContent = `${i}/${files.length}`;
-      if (progressFill) progressFill.style.width = `${Math.round((i / files.length) * 100)}%`;
+      if (progressFile) progressFile.textContent = file.name;
+      if (progressText) progressText.textContent = `${index}/${files.length}`;
+      if (progressFill) progressFill.style.width = `${Math.round((index / files.length) * 100)}%`;
 
-      const formData = new FormData();
-      formData.append("source", f);
-      formData.append("name", name);
+      messageDiv.textContent = `批量上传中 ${index + 1}/${files.length}: ${file.name}`;
 
-      messageDiv.textContent = `批量上传中 ${i + 1}/${files.length}: ${f.name}`;
-
+      const formData = createFormData([file], name);
       const response = await fetch("/api/upload", {
         method: "POST",
         body: formData,
       });
 
       const data = await response.json().catch(() => ({}));
-
       if (response.ok && data.success) {
         addResult(true, data.name || name, data.url || "");
       } else {
         addResult(false, name, data.error || `HTTP ${response.status}`);
       }
 
-      // 完成一项后更新进度
-      const done = i + 1;
+      const done = index + 1;
       if (progressText) progressText.textContent = `${done}/${files.length}`;
       if (progressFill) progressFill.style.width = `${Math.round((done / files.length) * 100)}%`;
     }
 
     messageDiv.textContent = `批量上传完成：${files.length}/${files.length}`;
     imageInput.value = "";
-
-    // 上传结束：停留 1 秒再隐藏进度条
     setTimeout(() => hideProgress(), 1000);
     hidePreview();
-  } catch (err) {
-    messageDiv.textContent = `批量上传失败：${err.message}`;
+  } catch (error) {
+    messageDiv.textContent = `批量上传失败：${error.message}`;
     hideProgress();
   }
 }
 
-/* ========== 批量预览：选择多张时显示将使用的名称 ========== */
 (function setupBatchPreview() {
   const imageInput = document.getElementById("image");
   const previewBox = document.getElementById("batchPreview");
@@ -181,32 +187,42 @@ async function uploadBatch() {
     }
 
     previewBox.style.display = "block";
-    for (const f of files) {
-      const name = filenameToName(f.name);
+    files.forEach((file) => {
+      const name = filenameToName(file.name);
       const li = document.createElement("li");
       li.innerHTML = `
-        <span>🖼️ <b>${name}</b></span>
-        <span class="meta">${prettySize(f.size)}</span>
+        <span><b>${name}</b></span>
+        <span class="meta">${prettySize(file.size)}</span>
       `;
       previewList.appendChild(li);
-    }
+    });
   });
 })();
 
-/* ========== 随机背景（接口版） ========== */
-(function () {
-  const randomImageURL = "https://www.loliapi.com/acg/";
+(function applyBackground() {
+  const bgApi = (document.body.dataset.bgApi || "").trim();
+  const backgrounds = [
+    "radial-gradient(900px 600px at 12% 18%, rgba(255,107,214,.25), transparent 60%)",
+    "radial-gradient(800px 520px at 85% 20%, rgba(57,213,255,.20), transparent 55%)",
+    "radial-gradient(900px 650px at 55% 92%, rgba(124,107,255,.18), transparent 60%)",
+    "linear-gradient(135deg, #ffe9f6, #e9f1ff, #eafff7)",
+  ];
 
-  document.body.style.backgroundImage = `
-    url(${randomImageURL}),
-    radial-gradient(900px 600px at 12% 18%, rgba(255,107,214,.25), transparent 60%),
-    radial-gradient(800px 520px at 85% 20%, rgba(57,213,255,.20), transparent 55%),
-    radial-gradient(900px 650px at 55% 92%, rgba(124,107,255,.18), transparent 60%),
-    linear-gradient(135deg, #ffe9f6, #e9f1ff, #eafff7)
-  `;
+  if (bgApi) {
+    const join = bgApi.includes("?") ? "&" : "?";
+    backgrounds.unshift(`url(${bgApi}${join}t=${Date.now()})`);
+    document.body.style.backgroundSize = "cover";
+    document.body.style.backgroundPosition = "center";
+    document.body.style.backgroundRepeat = "no-repeat";
+    document.body.style.backgroundAttachment = "fixed";
+  }
 
-  document.body.style.backgroundSize = "cover";
-  document.body.style.backgroundPosition = "center";
-  document.body.style.backgroundRepeat = "no-repeat";
-  document.body.style.backgroundAttachment = "fixed";
+  document.body.style.backgroundImage = backgrounds.join(",");
 })();
+
+window.addEventListener("DOMContentLoaded", () => {
+  document.querySelectorAll(".folder-btn").forEach((button) => {
+    button.addEventListener("click", () => setCategory(button.dataset.category));
+  });
+  setCategory("default");
+});

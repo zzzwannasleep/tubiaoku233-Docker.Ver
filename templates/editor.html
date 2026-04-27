@@ -3,14 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>图标在线编辑———Zzzの图标库</title>
+  <title>{{ library_title }} 编辑器</title>
 
   <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}" type="image/png">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/editor.css') }}?v=editor_20260104">
-
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/editor.css') }}?v=20260427A">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.css">
 
-  <!-- ✅ 给编辑页加“二次元随机背景”所需的少量样式（不依赖你现有 editor.css） -->
   <style>
     .ani-bg{
       position:fixed; inset:0;
@@ -33,27 +31,26 @@
   </style>
 </head>
 
-<body class="editor-body">
-  <!-- ✅ 背景层 -->
+<body class="editor-body" data-bg-api="{{ bg_api }}">
   <div class="ani-bg" id="aniBg"></div>
   <div class="ani-overlay"></div>
 
   <div class="editor-topbar">
     <div class="topbar-left">
-      <a class="topbar-back" href="/">← 返回上传页</a>
-      <span class="topbar-title">图标在线编辑（裁剪 + 手动抠图 + 一键上传）</span>
+      <a class="topbar-back" href="/">返回上传页</a>
+      <span class="topbar-title">{{ library_title }} 在线编辑器</span>
     </div>
     <div class="topbar-right">
-      <!-- ✅ 管理入口 -->
+      {% if admin_enabled %}
       <a class="mini-btn" href="/manage" style="text-decoration:none;display:inline-flex;align-items:center;gap:6px;">
         管理后台
       </a>
+      {% endif %}
       <button class="mini-btn" id="btnReset">重置</button>
     </div>
   </div>
 
   <div class="editor-layout">
-    <!-- 左侧工具 -->
     <aside class="editor-panel">
       <div class="panel-block">
         <div class="panel-title">1) 导入图片</div>
@@ -62,28 +59,24 @@
       </div>
 
       <div class="panel-block">
-        <div class="panel-title">2) 模式选择</div>
+        <div class="panel-title">2) 选择模式</div>
         <div class="btn-col">
           <button class="tool-btn" id="btnModeCrop">进入裁剪模式（1:1）</button>
-          <button class="tool-btn" id="btnModeCutout">进入手动抠图模式（橡皮擦）</button>
+          <button class="tool-btn" id="btnModeCutout">进入手动抠图模式</button>
         </div>
         <div class="panel-hint">
-          裁剪：移动裁剪框，框住哪里就裁哪里（1:1）<br/>
-          抠图：擦掉背景变透明
+          裁剪模式用于生成标准方图，抠图模式适合做透明图标。
         </div>
       </div>
 
       <div class="panel-block">
-        <div class="panel-title">3) 裁剪工具（像 PS）</div>
+        <div class="panel-title">3) 裁剪工具</div>
         <div class="btn-col">
           <button class="tool-btn" id="btnCropCenter">裁剪框居中</button>
           <button class="tool-btn" id="btnCropMax">裁剪框最大化</button>
-          <button class="tool-btn" id="btnZoomIn">放大（+）</button>
-          <button class="tool-btn" id="btnZoomOut">缩小（-）</button>
+          <button class="tool-btn" id="btnZoomIn">放大</button>
+          <button class="tool-btn" id="btnZoomOut">缩小</button>
           <button class="tool-btn" id="btnViewReset">重置视图</button>
-        </div>
-        <div class="panel-hint">
-          小技巧：滚轮/双指也可以缩放图片；拖动裁剪框选择区域
         </div>
       </div>
 
@@ -95,7 +88,7 @@
           <span id="brushSizeText">25</span>
         </label>
         <button class="tool-btn" id="btnUndo">撤销一步</button>
-        <div class="panel-hint">仅在“手动抠图模式”生效</div>
+        <div class="panel-hint">仅在手动抠图模式下生效</div>
       </div>
 
       <div class="panel-block">
@@ -104,49 +97,46 @@
           <button class="tool-btn" id="btnExportSquare">导出方形 PNG</button>
           <button class="tool-btn" id="btnExportCircle">导出圆形 PNG</button>
         </div>
-        <div class="panel-hint">圆形导出会自动做透明圆形遮罩</div>
+        <div class="panel-hint">圆形导出会自动加透明圆形遮罩。</div>
       </div>
 
-      <!-- ✅ AI 抠图（默认双通道 + 自定义模式2） -->
       <div class="panel-block">
-        <div class="panel-title">6) AI 抠图（去背景透明）</div>
+        <div class="panel-title">6) AI 抠图</div>
         <div class="btn-col">
-          <button class="tool-btn" id="btnAICutoutDefault">默认AI抠图（Clipdrop + remove.bg 自动均衡）</button>
+          <button class="tool-btn" id="btnAICutoutDefault">默认 AI 抠图</button>
 
           {% if custom_ai_enabled %}
-          <button class="tool-btn" id="btnUnlockCustomAI">解锁自定义AI（需要密码）</button>
-          <button class="tool-btn" id="btnAICutoutCustom" style="display:none;">自定义AI抠图（已解锁）</button>
+          <button class="tool-btn" id="btnUnlockCustomAI">解锁自定义 AI</button>
+          <button class="tool-btn" id="btnAICutoutCustom" style="display:none;">自定义 AI 抠图</button>
           {% endif %}
         </div>
         <div id="aiMsg" class="upload-msg"></div>
 
         {% if custom_ai_enabled %}
         <div class="panel-hint">
-          自定义AI已启用：需要在 Vercel 环境变量配置 CUSTOM_AI_URL / CUSTOM_AI_FILE_FIELD（可选：CUSTOM_AI_API_KEY）。<br/>
-          提示：解锁密码为 CUSTOM_AI_PASSWORD。
+          自定义 AI 已启用，请通过 `CUSTOM_AI_*` 环境变量配置接口地址和鉴权信息。
         </div>
         {% else %}
         <div class="panel-hint">
-          你当前仅启用默认AI（如需自定义AI：设置 CUSTOM_AI_ENABLED=1）。
+          如需自定义 AI，请设置 `CUSTOM_AI_ENABLED=1` 并补齐 `CUSTOM_AI_*` 环境变量。
         </div>
         {% endif %}
       </div>
 
-      <!-- ✅ 一键上传到图标库 -->
       <div class="panel-block">
         <div class="panel-title">7) 一键上传到图标库</div>
 
-        <label class="panel-label" for="uploadName">名称（可不填）</label>
-        <input id="uploadName" type="text" placeholder="不填则自动用文件名/默认名">
+        <label class="panel-label" for="uploadName">名称（可选）</label>
+        <input id="uploadName" type="text" placeholder="不填则自动使用文件名或默认名称">
 
         <div class="panel-hint">
-          - 单张建议手填更规范<br/>
-          - 不填时：自动用文件名（去扩展名）；没有文件名则用 icon
+          方形、圆形、透明图会写入各自的本地 JSON 与目录。
         </div>
 
         <div class="btn-col">
-          <button class="tool-btn" id="btnUploadSquare">一键上传（方形）</button>
-          <button class="tool-btn" id="btnUploadCircle">一键上传（圆形）</button>
+          <button class="tool-btn" id="btnUploadSquare">上传到方形分类</button>
+          <button class="tool-btn" id="btnUploadCircle">上传到圆形分类</button>
+          <button class="tool-btn" id="btnUploadTransparent">上传到透明分类</button>
         </div>
 
         <div id="uploadMsg" class="upload-msg"></div>
@@ -155,16 +145,14 @@
       <div class="panel-block">
         <div class="panel-title">使用说明</div>
         <ol class="panel-ol">
-          <li>先导入图片</li>
-          <li>裁剪模式：移动裁剪框（1:1）框住你要的部分</li>
-          <li>抠图模式：擦掉背景变透明</li>
-          <li>导出预览或直接一键上传</li>
-          <li>背景：点击空白背景切换下一张；Shift+点击任意位置也可切换</li>
+          <li>先导入一张图片。</li>
+          <li>裁剪模式适合做标准头像框，抠图模式适合去背景。</li>
+          <li>导出预览确认后，可以直接上传到对应分类。</li>
+          <li>需要固定完整外链时，请在部署时配置 `PUBLIC_BASE_URL`。</li>
         </ol>
       </div>
     </aside>
 
-    <!-- 中央工作区 -->
     <main class="editor-stage">
       <div id="cropWrap" class="stage-box" style="display:none;">
         <img id="cropImage" alt="crop" />
@@ -176,35 +164,36 @@
 
       <div id="emptyWrap" class="stage-empty">
         <div class="empty-title">请先导入一张图片</div>
-        <div class="empty-sub">支持：裁剪（1:1）/ 手动抠图（橡皮擦）/ 一键上传</div>
+        <div class="empty-sub">支持裁剪、手动抠图、AI 抠图以及直接上传。</div>
       </div>
 
       <div id="exportWrap" class="export-wrap" style="display:none;">
-        <div class="export-title">导出预览（右键/长按保存）</div>
+        <div class="export-title">导出预览（右键或长按保存）</div>
         <img id="exportImg" alt="export" />
       </div>
     </main>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/fabric@5.3.0/dist/fabric.min.js"></script>
-  <script src="{{ url_for('static', filename='js/editor.js') }}?v=editor_upload_ai_1"></script>
-
-  <!-- ✅ 随机背景逻辑 -->
+  <script src="{{ url_for('static', filename='js/editor.js') }}?v=20260427A"></script>
   <script>
     const BG_API = "{{ bg_api }}";
     const bgEl = document.getElementById("aniBg");
 
-    function refreshBg(){
-      const u = BG_API.includes("?") ? (BG_API + "&t=" + Date.now()) : (BG_API + "?t=" + Date.now());
-      bgEl.style.backgroundImage = `url("${u}")`;
+    function refreshBg() {
+      if (!BG_API) {
+        bgEl.style.backgroundImage = "";
+        return;
+      }
+      const join = BG_API.includes("?") ? "&" : "?";
+      bgEl.style.backgroundImage = `url("${BG_API}${join}t=${Date.now()}")`;
     }
 
     refreshBg();
-    // 点击背景换图
     bgEl.addEventListener("click", refreshBg);
-    // Shift+点击任意位置换图（不影响你的工具区点击）
-    window.addEventListener("click", (e)=>{ if(e.shiftKey) refreshBg(); });
+    window.addEventListener("click", (event) => {
+      if (event.shiftKey) refreshBg();
+    });
   </script>
 </body>
 </html>

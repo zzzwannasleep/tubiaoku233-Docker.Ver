@@ -3,27 +3,42 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Zzzの图标库</title>
-
-  <!-- 防缓存：v=stable_20260102，后续你改样式/脚本就改这个值 -->
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=stable_20260102">
+  <title>{{ library_title }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20260427A">
   <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}" type="image/png">
 </head>
 
-<body>
+<body data-bg-api="{{ bg_api }}">
   <div class="container">
-    <h1>Zzzの图标库</h1>
+    <h1>{{ library_title }}</h1>
 
-    <div class="form-group">
-      <label for="name">图片名称（单张上传必填）</label>
-      <input type="text" id="name" placeholder="例如：UHD透明">
+    <div class="name-hint">
+      <div>当前版本已改为本地存储模式，适合 Docker / Docker Compose 自托管。</div>
+      <div class="hint-small">图片保存在服务器挂载目录，JSON 由当前服务直接提供，不再依赖 Vercel、GitHub Gist 或 GitHub Repo。</div>
     </div>
 
     <div class="form-group">
-      <div class="name-hint">
-        单张上传：需要填写名称<br>
-        批量上传：自动使用文件名（去扩展名）
+      <label>选择分类</label>
+      <div class="folder-grid" id="folderGrid">
+        {% for category in categories %}
+        <button
+          class="folder-btn{% if loop.first %} active{% endif %}"
+          type="button"
+          data-category="{{ category.key }}"
+          data-label="{{ category.label }}"
+          data-json="{{ category.json_file }}"
+        >
+          <div class="folder-title">{{ category.label }}</div>
+          <div class="folder-sub">{{ category.json_file }}</div>
+        </button>
+        {% endfor %}
       </div>
+      <div class="folder-current" id="folderCurrent">当前分类：默认</div>
+    </div>
+
+    <div class="form-group">
+      <label for="name">图片名称</label>
+      <input type="text" id="name" placeholder="可选；单张上传时可手动指定，不填则使用文件名">
     </div>
 
     <div class="form-group">
@@ -31,13 +46,12 @@
       <input type="file" id="image" accept="image/*" multiple>
     </div>
 
-   <div class="btn-row">
-  <a class="upload-btn link-btn" href="/editor" target="_blank">图标编辑</a>
-  <button class="upload-btn" onclick="uploadSingle()">单张上传</button>
-  <button class="upload-btn" onclick="uploadBatch()">批量上传</button>
-   </div>
+    <div class="btn-row">
+      <a class="upload-btn link-btn" href="/editor" target="_blank">图标编辑</a>
+      <button class="upload-btn" onclick="uploadSingle()">上传单张</button>
+      <button class="upload-btn" onclick="uploadBatch()">批量上传</button>
+    </div>
 
-    <!-- 进度条（批量上传时显示） -->
     <div id="progressWrap" class="progress-wrap" style="display:none;">
       <div class="progress-top">
         <span id="progressText">0/0</span>
@@ -48,9 +62,8 @@
       </div>
     </div>
 
-    <!-- 批量预览（选择多张时显示） -->
     <div id="batchPreview" class="batch-preview" style="display:none;">
-      <div class="preview-title">📦 批量上传预览（将使用文件名作为名称）</div>
+      <div class="preview-title">批量上传预览</div>
       <ul id="previewList" class="preview-list"></ul>
     </div>
 
@@ -58,22 +71,20 @@
     <ul id="resultList"></ul>
 
     <p class="centered-link">
-      <a href="{{ url_for('icons_json') }}" target="_blank">
-        <img src="https://cdn-icons-png.flaticon.com/512/136/136525.png" alt="GitHub" class="github-icon">
-        Json订阅链接
-      </a>
-
-      <a href="https://github.com/Zzzwannasleep/tubiaoku233" target="_blank">
-        <img src="https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png" alt="GitHub" class="github-icon">
-        GitHub开源仓库
-      </a>
+      <a href="{{ url_for('icons_json') }}" target="_blank">默认 JSON</a>
+      <a href="{{ url_for('icons_square_json') }}" target="_blank">方形 JSON</a>
+      <a href="{{ url_for('icons_circle_json') }}" target="_blank">圆形 JSON</a>
+      <a href="{{ url_for('icons_transparent_json') }}" target="_blank">透明 JSON</a>
+      {% if admin_enabled %}
+      <a href="/manage" target="_blank">管理后台</a>
+      {% endif %}
     </p>
 
     <p class="hint-text">
-      上传后如 JSON 未更新，请稍等或清缓存
+      如果你需要稳定的完整外链，请在部署时设置 `PUBLIC_BASE_URL`。
     </p>
   </div>
 
-  <script src="{{ url_for('static', filename='js/script.js') }}?v=stable_20260102"></script>
+  <script src="{{ url_for('static', filename='js/script.js') }}?v=20260427A"></script>
 </body>
 </html>

@@ -1,465 +1,313 @@
-from flask import Flask, request, jsonify, render_template, Response, url_for, redirect
-import requests
-import os
+from __future__ import annotations
+
 import json
-import base64
+import math
+import os
 import random
-import time
+import re
+import threading
 from functools import wraps
-from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
-from urllib.parse import quote
+from pathlib import Path
+from urllib.parse import quote, urlparse
 
-app = Flask(__name__,
-            static_folder=os.path.join(os.path.dirname(__file__), '../static'),
-            template_folder=os.path.join(os.path.dirname(__file__), '../templates'))
+import requests
+from dotenv import load_dotenv
+from flask import (
+    Flask,
+    Response,
+    abort,
+    has_request_context,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_from_directory,
+    url_for,
+)
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+from werkzeug.middleware.proxy_fix import ProxyFix
 
-# ===== Custom AI (模式2：解锁后使用) =====
-app.secret_key = os.getenv('FLASK_SECRET_KEY', 'dev_secret_change_me')
+ROOT_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(ROOT_DIR / ".env")
+
+app = Flask(
+    __name__,
+    static_folder=os.path.join(os.path.dirname(__file__), "../static"),
+    template_folder=os.path.join(os.path.dirname(__file__), "../templates"),
+)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
+
+
+def env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name, "1" if default else "0").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def env_int(name: str, default: int) -> int:
+    raw = (os.getenv(name, "") or "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+LIBRARY_TITLE = (os.getenv("LIBRARY_TITLE", "图标库") or "图标库").strip()
+PUBLIC_BASE_URL = (os.getenv("PUBLIC_BASE_URL", "") or "").strip().rstrip("/")
+RANDOM_BG_API = (os.getenv("RANDOM_BG_API", "") or "").strip()
+COOKIE_SECURE = env_bool("COOKIE_SECURE", False)
+ADMIN_ENABLED = env_bool("ADMIN_ENABLED", False)
+ADMIN_PASSWORD = (os.getenv("ADMIN_PASSWORD", "") or "").strip()
+ADMIN_COOKIE_MAX_AGE = env_int("ADMIN_COOKIE_MAX_AGE", 86400)
+ADMIN_PAGE_SIZE = max(1, env_int("ADMIN_PAGE_SIZE", 24))
+CUSTOM_AI_ENABLED = env_bool("CUSTOM_AI_ENABLED", False)
+CUSTOM_AI_PASSWORD = (os.getenv("CUSTOM_AI_PASSWORD", "") or "").strip()
+
+max_upload_mb = env_int("MAX_UPLOAD_MB", 20)
+if max_upload_mb > 0:
+    app.config["MAX_CONTENT_LENGTH"] = max_upload_mb * 1024 * 1024
+
+data_dir_raw = (os.getenv("APP_DATA_DIR", "") or "").strip()
+DATA_DIR = Path(data_dir_raw).expanduser().resolve() if data_dir_raw else (ROOT_DIR / "data").resolve()
+IMAGE_ROOT = DATA_DIR / "images"
+
+CATEGORY_ORDER = ["default", "square", "circle", "transparent"]
+CATEGORY_CONFIG = {
+    "default": {"json_file": "icons.json", "folder": "", "label": "默认"},
+    "square": {"json_file": "icons-square.json", "folder": "square", "label": "方形"},
+    "circle": {"json_file": "icons-circle.json", "folder": "circle", "label": "圆形"},
+    "transparent": {"json_file": "icons-transparent.json", "folder": "transparent", "label": "透明"},
+}
+STORAGE_LOCK = threading.RLock()
+
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev_secret_change_me")
 serializer = URLSafeTimedSerializer(app.secret_key)
-CUSTOM_AI_ENABLED = os.getenv('CUSTOM_AI_ENABLED', '0').strip() == '1'
-CUSTOM_AI_PASSWORD = os.getenv('CUSTOM_AI_PASSWORD', '').strip()
 
-# ===== Admin 管理后台（独立 manage 页 + 密码登录）=====
-ADMIN_ENABLED = os.getenv("ADMIN_ENABLED", "0").strip() == "1"
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "").strip()
-ADMIN_COOKIE_MAX_AGE = int((os.getenv("ADMIN_COOKIE_MAX_AGE", "86400") or "86400").strip())
 
-def _set_admin_cookie(resp):
-    token = serializer.dumps({"admin": 1})
-    resp.set_cookie(
-        "admin_auth",
-        token,
-        max_age=ADMIN_COOKIE_MAX_AGE,
-        httponly=True,
-        samesite="Lax",
-        secure=True,  # 线上 https
-    )
-    return resp
-
-def _check_admin_cookie():
-    raw = request.cookies.get("admin_auth", "")
-    try:
-        serializer.loads(raw, max_age=ADMIN_COOKIE_MAX_AGE)
-        return True
-    except (BadSignature, SignatureExpired):
-        return False
-    except Exception:
-        return False
-
-def require_admin(fn):
-    @wraps(fn)
-    def wrapper(*args, **kwargs):
-        if not ADMIN_ENABLED:
-            return jsonify({"ok": False, "message": "Admin disabled"}), 403
-        if not _check_admin_cookie():
-            return jsonify({"ok": False, "message": "Unauthorized"}), 401
-        return fn(*args, **kwargs)
-    return wrapper
-
-# ===== 随机二次元背景 API（管理页/编辑页统一用）=====
-RANDOM_BG_API = os.getenv("RANDOM_BG_API", "https://api.btstu.cn/sjbz/?lx=dongman").strip()
-
-# PicGo API 配置
-PICGO_API_URL = "https://www.picgo.net/api/1/upload"
-PICGO_API_KEY = os.getenv("PICGO_API_KEY", "YOUR_API_KEY")
-
-# ImgURL API 配置
-IMGURL_API_URL = "https://www.imgurl.org/api/v2/upload"
-IMGURL_API_UID = os.getenv("IMGURL_API_UID", "YOUR_IMGURL_UID")
-IMGURL_API_TOKEN = os.getenv("IMGURL_API_TOKEN", "YOUR_IMGURL_TOKEN")
-
-# PICUI API 配置
-PICUI_UPLOAD_URL = "https://picui.cn/api/v1/upload"
-PICUI_TOKEN = os.getenv("PICUI_TOKEN", "").strip()
-
-# GitHub Gist 配置
-GIST_ID = os.getenv("GIST_ID", "YOUR_GIST_ID")
-GITHUB_USER = os.getenv("GITHUB_USER", "YOUR_GITHUB_USER")
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "YOUR_GITHUB_TOKEN")
-GIST_FILE_NAME = "icons.json"
-
-# GitHub Repo -> Gist 分流（UPLOAD_SERVICE=GITHUB + github_folder 时使用）
-GITHUB_GIST_FILE_SQUARE = (os.getenv("GITHUB_GIST_FILE_SQUARE", "icons-square.json") or "").strip()
-GITHUB_GIST_FILE_CIRCLE = (os.getenv("GITHUB_GIST_FILE_CIRCLE", "icons-circle.json") or "").strip()
-GITHUB_GIST_FILE_TRANSPARENT = (os.getenv("GITHUB_GIST_FILE_TRANSPARENT", "icons-transparent.json") or "").strip()
-
-# GitHub Repo 图床配置（UPLOAD_SERVICE=GITHUB 时使用）
-GITHUB_REPO = os.getenv("GITHUB_REPO", "").strip()  # owner/repo
-GITHUB_REPO_OWNER = os.getenv("GITHUB_REPO_OWNER", "").strip()
-GITHUB_REPO_NAME = os.getenv("GITHUB_REPO_NAME", "").strip()
-GITHUB_REPO_BRANCH = (os.getenv("GITHUB_REPO_BRANCH", "main") or "main").strip()
-GITHUB_REPO_DIR = (os.getenv("GITHUB_REPO_DIR", "images") or "images").strip().strip("/")
-GITHUB_REPO_TOKEN = os.getenv("GITHUB_REPO_TOKEN", "").strip()  # 可与 GITHUB_TOKEN 不同
-GITHUB_REPO_URL_MODE = (os.getenv("GITHUB_REPO_URL_MODE", "RAW") or "RAW").strip().upper()
-GITHUB_REPO_URL_PREFIX = os.getenv("GITHUB_REPO_URL_PREFIX", "").strip()
-GITHUB_REPO_COMMIT_MESSAGE = os.getenv("GITHUB_REPO_COMMIT_MESSAGE", "").strip()
-
-if os.getenv("UPLOAD_SERVICE", "").upper() == "GITHUB":
-    if not (GITHUB_REPO or (GITHUB_REPO_OWNER and GITHUB_REPO_NAME)):
-        print("警告：UPLOAD_SERVICE=GITHUB 但未配置 GITHUB_REPO 或 GITHUB_REPO_OWNER/GITHUB_REPO_NAME")
-    token = (GITHUB_REPO_TOKEN or "").strip() or (GITHUB_TOKEN or "").strip()
-    if not token or token.startswith("YOUR_"):
-        print("警告：UPLOAD_SERVICE=GITHUB 但未配置 GITHUB_REPO_TOKEN / GITHUB_TOKEN，图床上传将失败")
-
-# 警告检查
-if os.getenv("UPLOAD_SERVICE", "").upper() == "PICUI" and not PICUI_TOKEN:
-    print("警告：UPLOAD_SERVICE=PICUI 但 PICUI_TOKEN 未配置，PICUI 上传将全部失败（强制 Token 模式）")
-
-# ===== Gist 读取/更新工具函数 =====
-
-def get_gist_data():
-    headers = {
-        "Authorization": f"Bearer {GITHUB_TOKEN}",
-        "Accept": "application/vnd.github.v3+json",
-    }
-    r = requests.get(f"https://api.github.com/gists/{GIST_ID}", headers=headers, timeout=30)
-    r.raise_for_status()
-    return r.json()
-
-def update_gist_data(content, file_name=GIST_FILE_NAME):
-    """更新 Gist 数据（替换整个文件内容）"""
-    headers = {
-        "Authorization": f"Bearer {GITHUB_TOKEN}",
-        "Accept": "application/vnd.github.v3+json",
-    }
-    file_name = (file_name or GIST_FILE_NAME or "icons.json").strip()
-    data = {"files": {file_name: {"content": json.dumps(content, ensure_ascii=False, indent=2)}}}
-    response = requests.patch(f"https://api.github.com/gists/{GIST_ID}", json=data, headers=headers, timeout=30)
-    if response.status_code != 200:
-        raise Exception(f"更新 Gist 失败：{response.text}")
-    return response.json()
-
-def _update_gist_with_retry(content, file_name=GIST_FILE_NAME, max_retry=3):
-    """对 Gist PATCH 做指数退避重试，缓解偶发失败/流控"""
-    last_err = None
-    for i in range(max_retry):
-        try:
-            return update_gist_data(content, file_name=file_name)
-        except Exception as e:
-            last_err = e
-            time.sleep(2 ** i)  # 1s,2s,4s
-    raise last_err
-
-def _read_icons_json_from_gist(file_name=GIST_FILE_NAME):
-    gist = get_gist_data()
-    file_name = (file_name or GIST_FILE_NAME or "icons.json").strip()
-    icons_raw = gist.get("files", {}).get(file_name, {}).get("content", "{}")
-    content = json.loads(icons_raw) if isinstance(icons_raw, str) else icons_raw
-    if not isinstance(content, dict):
-        content = {}
-    if "icons" not in content or not isinstance(content.get("icons"), list):
-        content["icons"] = []
-    return content
-
-def get_unique_name(name, json_content):
-    """名称去重逻辑"""
-    icons = json_content.get("icons", [])
-    if not any(icon["name"] == name for icon in icons):
-        return name
-
-    base_name = name
-    counter = 1
-    while any(icon["name"] == f"{base_name}{counter}" for icon in icons):
-        counter += 1
-    return f"{base_name}{counter}"
-
-def batch_append_to_gist(new_items, file_name=GIST_FILE_NAME):
-    """
-    一次性将 new_items 列表追加到 Gist
-    new_items: [{"name": "raw_name", "url": "http..."}]
-    Return: 更新后的 items (包含去重后的最终名称)
-    """
-    try:
-        content = _read_icons_json_from_gist(file_name=file_name)
-        saved_chunk = []
-
-        for item in new_items:
-            final_name = get_unique_name(item["name"], content)
-            content.setdefault("icons", []).append({
-                "name": final_name,
-                "url": item["url"]
-            })
-            saved_chunk.append({"name": final_name, "url": item["url"]})
-
-        _update_gist_with_retry(content, file_name=file_name)
-        return saved_chunk
-    except Exception as e:
-        print(f"Gist 批量更新失败: {e}")
-        raise e
-
-def gist_remove_icons_by_urls(urls_to_remove: set):
-    """
-    从 icons.json 中批量移除 url 命中的条目，并尽量合并为一次 PATCH。
-    一致性保证：urls_to_remove 必须只包含“PICUI 删除成功”的 URL
-    """
-    urls_to_remove = set([u for u in (urls_to_remove or set()) if u])
-    content = _read_icons_json_from_gist()
-    icons = content.get("icons", []) or []
-    before = len(icons)
-
-    new_icons = [it for it in icons if it.get("url") not in urls_to_remove]
-    after = len(new_icons)
-
-    content["icons"] = new_icons
-    if after != before:
-        _update_gist_with_retry(content)
-
-    return {"before": before, "after": after, "removed": before - after}
-
-def gist_raw_icons_url():
-    return f"https://gist.githubusercontent.com/{GITHUB_USER}/{GIST_ID}/raw/{GIST_FILE_NAME}"
-
-# ===== 对外暴露带 .json 后缀的订阅地址（同域名，便于客户端识别）=====
-@app.get("/icons.json")
-def icons_json():
-    try:
-        content = _read_icons_json_from_gist()
-        # 使用 Response 而不是 jsonify，保证缩进 & Content-Type=application/json
-        return Response(json.dumps(content, ensure_ascii=False, indent=2), mimetype="application/json")
-    except Exception as e:
-        return jsonify({"error": "无法读取 icons.json", "details": str(e)}), 500
-
-@app.get("/icons-square.json")
-def icons_square_json():
-    try:
-        content = _read_icons_json_from_gist(file_name=_github_gist_file_for_folder("square"))
-        return Response(json.dumps(content, ensure_ascii=False, indent=2), mimetype="application/json")
-    except Exception as e:
-        return jsonify({"error": "无法读取 icons-square.json", "details": str(e)}), 500
-
-@app.get("/icons-circle.json")
-def icons_circle_json():
-    try:
-        content = _read_icons_json_from_gist(file_name=_github_gist_file_for_folder("circle"))
-        return Response(json.dumps(content, ensure_ascii=False, indent=2), mimetype="application/json")
-    except Exception as e:
-        return jsonify({"error": "无法读取 icons-circle.json", "details": str(e)}), 500
-
-@app.get("/icons-transparent.json")
-def icons_transparent_json():
-    try:
-        content = _read_icons_json_from_gist(file_name=_github_gist_file_for_folder("transparent"))
-        return Response(json.dumps(content, ensure_ascii=False, indent=2), mimetype="application/json")
-    except Exception as e:
-        return jsonify({"error": "无法读取 icons-transparent.json", "details": str(e)}), 500
-
-# ===== 图片上传实现 =====
-
-def upload_to_picgo(img):
-    headers = {"X-API-Key": PICGO_API_KEY}
-    files = {"source": (img.filename, img.stream, img.mimetype)}
-    r = requests.post(PICGO_API_URL, files=files, headers=headers, timeout=30)
-    r.raise_for_status()
-    j = r.json()
-    return (j.get("image") or {}).get("url", None)
-
-def upload_to_imgurl(img):
-    form = {"uid": IMGURL_API_UID, "token": IMGURL_API_TOKEN}
-    files = {"file": (img.filename, img.stream, img.mimetype)}
-    r = requests.post(IMGURL_API_URL, data=form, files=files, timeout=30)
-    r.raise_for_status()
-    j = r.json()
-    if "data" in j and "url" in j["data"]:
-        return j["data"]["url"]
-    if "url" in j:
-        return j["url"]
-    return None
-
-def upload_to_picui(image):
-    token = os.getenv("PICUI_TOKEN", "").strip()
-    if not token:
-        raise Exception("PICUI_TOKEN 为空：已启用强制 Token 上传模式")
-
-    headers = {
-        "Accept": "application/json",
-        "Authorization": f"Bearer {token}",
-    }
-    files = {"file": (image.filename, image.stream, image.mimetype)}
-    data = {}
-
-    permission = os.getenv("PICUI_PERMISSION", "0").strip()
-    if permission:
-        data["permission"] = permission
-    strategy_id = os.getenv("PICUI_STRATEGY_ID", "").strip()
-    if strategy_id:
-        data["strategy_id"] = strategy_id
-    album_id = os.getenv("PICUI_ALBUM_ID", "").strip()
-    if album_id:
-        data["album_id"] = album_id
-    expired_at = os.getenv("PICUI_EXPIRED_AT", "").strip()
-    if expired_at:
-        data["expired_at"] = expired_at
-
-    try:
-        r = requests.post(PICUI_UPLOAD_URL, headers=headers, data=data, files=files, timeout=30)
-        if r.status_code != 200:
-            print("PICUI 上传失败：", r.status_code, r.text)
-            return None
-        j = r.json()
-        if not j.get("status"):
-            return None
-        return j["data"]["links"]["url"]
-    except Exception as e:
-        print("PICUI 异常：", e)
-        return None
-
-# ===== Admin 后台：PICUI 列表/删除接口封装 =====
-# ===== GitHub Repo 图床实现 =====
-
-def _github_repo_owner_and_name():
-    repo = (GITHUB_REPO or "").strip()
-    if repo and "/" in repo:
-        owner, name = repo.split("/", 1)
-        owner = owner.strip()
-        name = name.strip()
-        if owner and name:
-            return owner, name
-
-    owner = (GITHUB_REPO_OWNER or "").strip()
-    name = (GITHUB_REPO_NAME or "").strip()
-    if owner and name:
-        return owner, name
-
-    raise Exception("GitHub Repo 未配置：请设置 GITHUB_REPO=owner/repo 或 GITHUB_REPO_OWNER/GITHUB_REPO_NAME")
-
-
-def _github_repo_token():
-    token = (GITHUB_REPO_TOKEN or "").strip()
-    if token:
-        return token
-
-    token = (GITHUB_TOKEN or "").strip()
-    if token and not token.startswith("YOUR_"):
-        return token
-
-    raise Exception("GitHub Token 未配置：请设置 GITHUB_REPO_TOKEN（或复用 GITHUB_TOKEN）")
-
-
-def _github_repo_headers():
-    token = _github_repo_token()
-    return {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
-
-
-def _guess_image_ext(filename: str, mimetype: str):
-    ext = os.path.splitext(filename or "")[1].lower()
-    if ext:
-        return ext
-
-    mt = (mimetype or "").lower()
-    if mt in ("image/jpeg", "image/jpg"):
-        return ".jpg"
-    if mt == "image/png":
-        return ".png"
-    if mt == "image/gif":
-        return ".gif"
-    if mt == "image/webp":
-        return ".webp"
-    if mt in ("image/svg+xml", "image/svg"):
-        return ".svg"
-
-    return ".png"
-
-
-def _sanitize_repo_filename_base(name: str):
-    name = (name or "").strip()
-    name = name.replace("/", "-").replace("\\", "-").replace("\x00", "")
-    return name or "image"
-
-
-def _github_repo_commit_message(filename: str):
-    tmpl = (GITHUB_REPO_COMMIT_MESSAGE or "").strip()
-    if tmpl:
-        return tmpl.replace("{filename}", filename)
-    return f"Upload {filename}"
-
-
-def _github_repo_build_file_url(owner: str, repo: str, branch: str, rel_path: str):
-    rel_path_q = quote((rel_path or "").lstrip("/"), safe="/")
-    mode = (GITHUB_REPO_URL_MODE or "RAW").strip().upper()
-
-    if mode == "JSDELIVR":
-        return f"https://cdn.jsdelivr.net/gh/{owner}/{repo}@{branch}/{rel_path_q}"
-
-    if mode == "PREFIX":
-        prefix = (GITHUB_REPO_URL_PREFIX or "").strip()
-        if not prefix:
-            raise Exception("GITHUB_REPO_URL_PREFIX 为空：请在 GITHUB_REPO_URL_MODE=PREFIX 时配置它")
-        if not prefix.endswith("/"):
-            prefix += "/"
-        return prefix + rel_path_q
-
-    if mode != "RAW":
-        raise Exception("GITHUB_REPO_URL_MODE 仅支持 RAW / JSDELIVR / PREFIX")
-
-    return f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{rel_path_q}"
-
-
-def _github_repo_put_new_file(owner: str, repo: str, branch: str, rel_path: str, content_b64: str, message: str):
-    api_path = quote((rel_path or "").lstrip("/"), safe="/")
-    url = f"https://api.github.com/repos/{owner}/{repo}/contents/{api_path}"
-    payload = {"message": message, "content": content_b64, "branch": branch}
-
-    r = requests.put(url, headers=_github_repo_headers(), json=payload, timeout=30)
-    if r.status_code in (200, 201):
-        return True, None
-
-    try:
-        j = r.json()
-    except Exception:
-        j = None
-
-    if r.status_code == 422 and isinstance(j, dict):
-        msg = (j.get("message") or "").lower()
-        errors = j.get("errors") or []
-        if "sha" in msg:
-            return False, "exists"
-        for e in errors:
-            if isinstance(e, dict) and (e.get("field") or "").lower() == "sha":
-                return False, "exists"
-
-    raise Exception(f"GitHub Repo 上传失败：HTTP {r.status_code} {r.text}")
-
-def _normalize_github_folder(raw: str):
-    key = (raw or "").strip().lower()
+def normalize_category(raw: str | None) -> str:
+    value = (raw or "").strip().lower()
     mapping = {
+        "": "default",
+        "default": "default",
+        "root": "default",
+        "main": "default",
         "square": "square",
         "rect": "square",
         "box": "square",
-        "方形": "square",
         "circle": "circle",
         "round": "circle",
-        "圆形": "circle",
         "transparent": "transparent",
         "alpha": "transparent",
-        "透明": "transparent",
     }
-    return mapping.get(key, "")
+    return mapping.get(value, "default")
 
 
-def _github_gist_file_for_folder(folder: str):
-    folder = _normalize_github_folder(folder)
-    if folder == "square":
-        return (GITHUB_GIST_FILE_SQUARE or "").strip() or GIST_FILE_NAME
-    if folder == "circle":
-        return (GITHUB_GIST_FILE_CIRCLE or "").strip() or GIST_FILE_NAME
-    if folder == "transparent":
-        return (GITHUB_GIST_FILE_TRANSPARENT or "").strip() or GIST_FILE_NAME
-    return GIST_FILE_NAME
+def category_config(category: str) -> dict:
+    return CATEGORY_CONFIG[normalize_category(category)]
 
-def upload_to_github_repo(image, icon_name: str, folder: str = ""):
-    owner, repo = _github_repo_owner_and_name()
-    branch = (GITHUB_REPO_BRANCH or "main").strip() or "main"
-    repo_dir = (GITHUB_REPO_DIR or "").strip().strip("/")
-    folder = _normalize_github_folder(folder)
-    if folder:
-        repo_dir = f"{repo_dir}/{folder}" if repo_dir else folder
 
-    base = _sanitize_repo_filename_base(icon_name or os.path.splitext(getattr(image, "filename", "") or "")[0] or "image")
-    ext = _guess_image_ext(getattr(image, "filename", "") or "", getattr(image, "mimetype", "") or "")
+def empty_catalog() -> dict:
+    return {"name": LIBRARY_TITLE, "description": "", "icons": []}
+
+
+def catalog_path(category: str) -> Path:
+    return DATA_DIR / category_config(category)["json_file"]
+
+
+def image_dir(category: str) -> Path:
+    folder = category_config(category)["folder"]
+    return IMAGE_ROOT / folder if folder else IMAGE_ROOT
+
+
+def safe_rel_path(raw: str | None) -> str:
+    parts = []
+    for part in Path((raw or "").replace("\\", "/")).parts:
+        if part in {"", ".", ".."}:
+            continue
+        parts.append(part)
+    return "/".join(parts)
+
+
+def resolve_media_path(rel_path: str) -> Path:
+    safe_path = safe_rel_path(rel_path)
+    target = (IMAGE_ROOT / safe_path).resolve()
+    root = IMAGE_ROOT.resolve()
+    if target != root and root not in target.parents:
+        raise ValueError("invalid media path")
+    return target
+
+
+def ensure_storage() -> None:
+    with STORAGE_LOCK:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        IMAGE_ROOT.mkdir(parents=True, exist_ok=True)
+        for key in CATEGORY_ORDER:
+            image_dir(key).mkdir(parents=True, exist_ok=True)
+            path = catalog_path(key)
+            if not path.exists():
+                path.write_text(
+                    json.dumps(empty_catalog(), ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+
+
+def extract_path_from_url(url: str) -> str:
+    if not url:
+        return ""
+    parsed = urlparse(url)
+    path = parsed.path or url
+    marker = "/media/"
+    if marker in path:
+        return path.split(marker, 1)[1].lstrip("/")
+    if path.startswith("media/"):
+        return path[len("media/") :]
+    return ""
+
+
+def normalize_icon_item(item: dict) -> dict | None:
+    if not isinstance(item, dict):
+        return None
+    name = (str(item.get("name") or "").strip() or "icon")
+    path = safe_rel_path(str(item.get("path") or "").strip())
+    url = str(item.get("url") or "").strip()
+    if not path and url:
+        path = extract_path_from_url(url)
+    if not path and not url:
+        return None
+
+    normalized = {"name": name}
+    if path:
+        normalized["path"] = path
+    elif url:
+        normalized["url"] = url
+    return normalized
+
+
+def read_catalog_unlocked(category: str) -> dict:
+    ensure_storage()
+    path = catalog_path(category)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        data = {}
+
+    if not isinstance(data, dict):
+        data = {}
+
+    icons = []
+    for item in data.get("icons") or []:
+        normalized = normalize_icon_item(item)
+        if normalized:
+            icons.append(normalized)
+
+    return {
+        "name": str(data.get("name") or LIBRARY_TITLE),
+        "description": str(data.get("description") or ""),
+        "icons": icons,
+    }
+
+
+def read_catalog(category: str) -> dict:
+    with STORAGE_LOCK:
+        return read_catalog_unlocked(category)
+
+
+def write_catalog_unlocked(category: str, content: dict) -> None:
+    payload = {
+        "name": str(content.get("name") or LIBRARY_TITLE),
+        "description": str(content.get("description") or ""),
+        "icons": [],
+    }
+    for item in content.get("icons") or []:
+        normalized = normalize_icon_item(item)
+        if not normalized:
+            continue
+        payload["icons"].append(normalized)
+
+    catalog_path(category).write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def build_media_url(rel_path: str) -> str:
+    safe_path = safe_rel_path(rel_path)
+    quoted_path = quote(safe_path, safe="/")
+    if PUBLIC_BASE_URL:
+        return f"{PUBLIC_BASE_URL}/media/{quoted_path}"
+    if has_request_context():
+        return request.url_root.rstrip("/") + url_for("serve_media", path=safe_path)
+    return f"/media/{quoted_path}"
+
+
+def catalog_for_response(category: str) -> dict:
+    content = read_catalog(category)
+    payload = {
+        "name": content.get("name") or LIBRARY_TITLE,
+        "description": content.get("description") or "",
+        "icons": [],
+    }
+    for item in content.get("icons") or []:
+        url = item.get("url") or (build_media_url(item.get("path", "")) if item.get("path") else "")
+        if not url:
+            continue
+        payload["icons"].append({"name": item.get("name") or "icon", "url": url})
+    return payload
+
+
+def get_unique_name(name: str, content: dict) -> str:
+    base_name = (name or "icon").strip() or "icon"
+    icons = content.get("icons", [])
+    if not any((item.get("name") or "") == base_name for item in icons):
+        return base_name
+
+    counter = 1
+    while any((item.get("name") or "") == f"{base_name}{counter}" for item in icons):
+        counter += 1
+    return f"{base_name}{counter}"
+
+
+def guess_image_ext(filename: str, mimetype: str) -> str:
+    ext = Path(filename or "").suffix.lower()
+    if re.fullmatch(r"\.[a-z0-9]{1,8}", ext or ""):
+        return ext
+
+    mt = (mimetype or "").lower()
+    mapping = {
+        "image/jpeg": ".jpg",
+        "image/jpg": ".jpg",
+        "image/png": ".png",
+        "image/gif": ".gif",
+        "image/webp": ".webp",
+        "image/svg+xml": ".svg",
+    }
+    return mapping.get(mt, ".png")
+
+
+def sanitize_filename_base(name: str) -> str:
+    base = (name or "").strip()
+    base = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "-", base)
+    base = re.sub(r"\s+", "_", base)
+    base = base.strip("._-")
+    return base or "image"
+
+
+def unique_media_rel_path_unlocked(base: str, ext: str, category: str) -> str:
+    folder = category_config(category)["folder"]
+    for index in range(1000):
+        suffix = "" if index == 0 else str(index)
+        filename = f"{base}{suffix}{ext}"
+        rel_path = f"{folder}/{filename}" if folder else filename
+        if not resolve_media_path(rel_path).exists():
+            return rel_path
+    raise Exception("文件重名过多，无法生成唯一文件名")
+
+
+def save_local_upload(image, desired_name: str, category: str) -> dict:
+    category = normalize_category(category)
+    name = (desired_name or Path(getattr(image, "filename", "") or "").stem or "image").strip() or "image"
+    ext = guess_image_ext(getattr(image, "filename", "") or "", getattr(image, "mimetype", "") or "")
 
     try:
         image.stream.seek(0)
@@ -467,431 +315,557 @@ def upload_to_github_repo(image, icon_name: str, folder: str = ""):
         pass
     raw_bytes = image.read()
     if not raw_bytes:
-        raise Exception("空文件")
-    content_b64 = base64.b64encode(raw_bytes).decode("utf-8")
+        raise Exception("空文件无法上传")
 
-    for i in range(0, 100):
-        suffix = "" if i == 0 else str(i)
-        filename = f"{base}{suffix}{ext}"
-        rel_path = f"{repo_dir}/{filename}" if repo_dir else filename
+    with STORAGE_LOCK:
+        content = read_catalog_unlocked(category)
+        final_name = get_unique_name(name, content)
+        rel_path = unique_media_rel_path_unlocked(sanitize_filename_base(final_name), ext, category)
+        target = resolve_media_path(rel_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(raw_bytes)
 
-        ok, reason = _github_repo_put_new_file(
-            owner=owner,
-            repo=repo,
-            branch=branch,
-            rel_path=rel_path,
-            content_b64=content_b64,
-            message=_github_repo_commit_message(filename),
-        )
-        if ok:
-            return _github_repo_build_file_url(owner, repo, branch, rel_path)
-        if reason == "exists":
-            continue
+        content.setdefault("icons", []).append({"name": final_name, "path": rel_path})
+        write_catalog_unlocked(category, content)
 
-    raise Exception("GitHub Repo 重名过多，无法生成唯一文件名")
+    return {
+        "name": final_name,
+        "path": rel_path,
+        "url": build_media_url(rel_path),
+        "category": category,
+    }
 
-# ===== Admin åŽå°ï¼šPICUI åˆ—è¡¨/åˆ é™¤æŽ¥å£å°è£… =====
-PICUI_API_BASE = "https://picui.cn/api/v1"
 
-def _picui_headers():
-    token = os.getenv("PICUI_TOKEN", "").strip()
-    if not token:
-        raise Exception("PICUI_TOKEN 未配置：无法访问 PICUI 管理接口")
-    return {"Accept": "application/json", "Authorization": f"Bearer {token}"}
+def category_from_path(rel_path: str) -> str:
+    safe_path = safe_rel_path(rel_path)
+    if not safe_path:
+        return "default"
+    first = safe_path.split("/", 1)[0].lower()
+    if first in {"square", "circle", "transparent"}:
+        return first
+    return "default"
 
-def picui_list_images(page=1, q=None):
-    params = {"page": page}
-    if q:
-        params["q"] = q
-    r = requests.get(f"{PICUI_API_BASE}/images", headers=_picui_headers(), params=params, timeout=30)
-    r.raise_for_status()
-    return r.json()
 
-def picui_delete_by_key(key: str):
-    r = requests.delete(f"{PICUI_API_BASE}/images/{key}", headers=_picui_headers(), timeout=30)
-    r.raise_for_status()
-    return r.json()
-
-# ===================== 路由逻辑 =====================
-
-@app.route("/")
-def home():
-    upload_service = os.getenv("UPLOAD_SERVICE", "PICGO").upper()
-    if upload_service == "GITHUB":
-        return redirect(url_for("github_upload"))
-    return render_template("index.html", github_user=GITHUB_USER, gist_id=GIST_ID)
-
-@app.route("/github")
-def github_upload():
-    if os.getenv("UPLOAD_SERVICE", "PICGO").upper() != "GITHUB":
-        return redirect(url_for("home"))
-    repo = (GITHUB_REPO or "").strip()
-    if not repo and GITHUB_REPO_OWNER and GITHUB_REPO_NAME:
-        repo = f"{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}"
-    return render_template(
-        "github.html",
-        repo=repo,
-        branch=GITHUB_REPO_BRANCH,
-        base_dir=GITHUB_REPO_DIR,
-        gist_square=url_for("icons_square_json"),
-        gist_circle=url_for("icons_circle_json"),
-        gist_transparent=url_for("icons_transparent_json"),
-        gist_all=url_for("icons_json"),
-        gist_file_square=_github_gist_file_for_folder("square"),
-        gist_file_circle=_github_gist_file_for_folder("circle"),
-        gist_file_transparent=_github_gist_file_for_folder("transparent"),
-    )
-
-@app.route("/editor")
-def editor():
-    # 如果你 editor.html 没用 bg_api 也不影响；用的话就是二次元随机背景
-    return render_template("editor.html", custom_ai_enabled=CUSTOM_AI_ENABLED, bg_api=RANDOM_BG_API)
-
-# ===== 独立 manage 页面 =====
-
-@app.get("/manage")
-def manage_page():
-    if not ADMIN_ENABLED:
-        return "Admin disabled", 403
-    return render_template("manage.html", bg_api=RANDOM_BG_API, gist_raw=url_for("icons_json"))
-
-# ===== Admin API =====
-
-@app.post("/api/admin/login")
-def api_admin_login():
-    if not ADMIN_ENABLED:
-        return jsonify({"ok": False, "message": "Admin disabled"}), 403
-    data = request.get_json(silent=True) or {}
-    pwd = (data.get("password") or "").strip()
-    if not ADMIN_PASSWORD:
-        return jsonify({"ok": False, "message": "ADMIN_PASSWORD 未配置"}), 500
-    if pwd != ADMIN_PASSWORD:
-        return jsonify({"ok": False, "message": "密码错误"}), 403
-    resp = jsonify({"ok": True})
-    return _set_admin_cookie(resp)
-
-@app.post("/api/admin/logout")
-@require_admin
-def api_admin_logout():
-    resp = jsonify({"ok": True})
-    resp.delete_cookie("admin_auth")
-    return resp
-
-@app.get("/api/admin/images")
-@require_admin
-def api_admin_images():
-    """
-    方案 A：管理页 1 页 = PICUI 的 1 页
-    - page: PICUI 页码
-    - q: 可选搜索
-    """
-    page = int(request.args.get("page", "1"))
-    q = (request.args.get("q") or "").strip() or None
-
-    pj = picui_list_images(page=page, q=q)
-
-    # 读一次 Gist（只读，不写）
-    content = _read_icons_json_from_gist()
-    icons = content.get("icons", []) or []
-    by_url = {it.get("url"): it for it in icons if it.get("url")}
-    raw_url = url_for("icons_json", _external=True)
-
-    data_obj = (pj.get("data", {}) or {})
-    data_list = data_obj.get("data") or []
-    per_page = data_obj.get("per_page")
-    last_page = data_obj.get("last_page")
-    total = data_obj.get("total")
-
+def list_admin_items(page: int, q: str | None) -> dict:
+    page = max(1, page)
+    keyword = (q or "").strip().lower()
     items = []
-    for img in (data_list or []):
-        key = img.get("key") or img.get("id") or ""
-        links = img.get("links") or {}
-        url = links.get("url") or img.get("url") or ""
-        icon = by_url.get(url)
-        items.append({
-            "key": key,
-            "url": url,
-            "in_gist": bool(icon),
-            "icon_name": (icon.get("name") if icon else None),
-        })
+    counts = {}
 
-    return jsonify({
-        "ok": True,
-        "page": page,
-        "items": items,
-        "picui": {
-            "per_page": per_page,
-            "last_page": last_page,
-            "total": total
-        },
-        "raw_icons_json": raw_url,
-        "gist_stats": {"count": len(icons)}
-    })
+    for category in CATEGORY_ORDER:
+        content = read_catalog(category)
+        counts[category] = len(content.get("icons") or [])
 
-@app.post("/api/admin/delete")
-@require_admin
-def api_admin_delete():
-    """
-    一致性保证（你要求的）：
-    - 先删 PICUI
-    - 只有 PICUI 删除成功的，才从 icons.json 移除
-    - 批量删除：Gist 更新合并为一次 PATCH
-    """
-    data = request.get_json(silent=True) or {}
-    items = data.get("items") or []
-    if not isinstance(items, list) or not items:
-        return jsonify({"ok": False, "message": "items 不能为空"}), 400
+        for item in content.get("icons") or []:
+            rel_path = item.get("path", "")
+            url = item.get("url") or (build_media_url(rel_path) if rel_path else "")
+            filename = Path(rel_path).name if rel_path else ""
 
-    picui_results = []
-    urls_to_remove = set()
+            exists = False
+            mtime = 0.0
+            if rel_path:
+                try:
+                    target = resolve_media_path(rel_path)
+                    exists = target.exists()
+                    if exists:
+                        mtime = target.stat().st_mtime
+                except Exception:
+                    exists = False
 
-    for it in items:
-        key = (it.get("key") or "").strip()
-        url = (it.get("url") or "").strip()
-
-        if not key:
-            picui_results.append({"ok": False, "key": key, "url": url, "error": "missing key"})
-            continue
-
-        try:
-            picui_delete_by_key(key)
-            picui_results.append({"ok": True, "key": key, "url": url})
-            if url:
-                urls_to_remove.add(url)  # 关键：只收集成功的
-        except Exception as e:
-            picui_results.append({"ok": False, "key": key, "url": url, "error": str(e)})
-
-    gist_summary = {"before": None, "after": None, "removed": 0}
-    if urls_to_remove:
-        gist_summary = gist_remove_icons_by_urls(urls_to_remove)
-
-    return jsonify({"ok": True, "picui": picui_results, "gist": gist_summary})
-
-# ===== 上传接口（保持你的逻辑不变）=====
-
-@app.route("/api/upload", methods=["POST"])
-def upload_image():
-    """
-    1. 单图上传：立即更新 Gist。
-    2. 批量上传：每积攒 10 张图的链接，更新一次 Gist（流控）。
-    3. 剩余不足 10 张：最后统一更新。
-    """
-    try:
-        images = request.files.getlist("source")
-        if not images:
-            return jsonify({"error": "缺少图片"}), 400
-
-        raw_name = (request.form.get("name") or "").strip()
-        upload_service = os.getenv("UPLOAD_SERVICE", "PICGO").upper()
-        github_folder = (request.form.get("github_folder") or "").strip()
-        gist_file_name = GIST_FILE_NAME
-        if upload_service == "GITHUB":
-            gist_file_name = _github_gist_file_for_folder(github_folder)
-
-        final_results = []
-        pending_batch = []
-        BATCH_SIZE = 10
-
-        gist_cache_for_unique_name = None
-        if upload_service == "GITHUB":
-            try:
-                gist_cache_for_unique_name = _read_icons_json_from_gist(file_name=gist_file_name)
-            except Exception:
-                gist_cache_for_unique_name = {"icons": []}
-
-        for image in images:
-            if not image or not getattr(image, "filename", ""):
+            haystack = " ".join(
+                [
+                    str(item.get("name") or ""),
+                    rel_path,
+                    filename,
+                    category,
+                    url,
+                ]
+            ).lower()
+            if keyword and keyword not in haystack:
                 continue
 
-            auto_name = os.path.splitext(image.filename)[0]
-            name = raw_name or auto_name
+            items.append(
+                {
+                    "key": rel_path or f"legacy:{category}:{item.get('name', '')}:{url}",
+                    "path": rel_path,
+                    "url": url,
+                    "category": category,
+                    "category_label": category_config(category)["label"],
+                    "icon_name": item.get("name") or "",
+                    "filename": filename,
+                    "exists": exists,
+                    "_mtime": mtime,
+                }
+            )
 
-            if upload_service == "GITHUB" and isinstance(gist_cache_for_unique_name, dict):
-                try:
-                    name = get_unique_name(name, gist_cache_for_unique_name)
-                except Exception:
-                    pass
+    items.sort(key=lambda entry: (entry["_mtime"], entry["icon_name"]), reverse=True)
 
-            upload_err = None
-            image_url = None
+    total = len(items)
+    last_page = max(1, math.ceil(total / ADMIN_PAGE_SIZE))
+    page = min(page, last_page)
+    start = (page - 1) * ADMIN_PAGE_SIZE
+    page_items = items[start : start + ADMIN_PAGE_SIZE]
 
-            try:
-                if upload_service == "IMGURL":
-                    image_url = upload_to_imgurl(image)
-                elif upload_service == "PICUI":
-                    if not os.getenv("PICUI_TOKEN", "").strip():
-                        upload_err = "PICUI_TOKEN 未配置"
-                    else:
-                        image_url = upload_to_picui(image)
-                elif upload_service == "GITHUB":
-                    image_url = upload_to_github_repo(image, name, github_folder)
-                else:
-                    image_url = upload_to_picgo(image)
-            except Exception as e:
-                upload_err = str(e)
+    for item in page_items:
+        item.pop("_mtime", None)
 
-            if not image_url:
-                final_results.append({
-                    "ok": False,
-                    "name": name,
-                    "error": upload_err or f"图片上传失败（{upload_service}）"
-                })
-            else:
-                pending_batch.append({"name": name, "url": image_url})
-                if upload_service == "GITHUB" and isinstance(gist_cache_for_unique_name, dict):
-                    gist_cache_for_unique_name.setdefault("icons", []).append({"name": name, "url": image_url})
+    return {
+        "page": page,
+        "items": page_items,
+        "pager": {
+            "page": page,
+            "per_page": ADMIN_PAGE_SIZE,
+            "last_page": last_page,
+            "total": total,
+        },
+        "catalog_stats": {
+            "total": sum(counts.values()),
+            "by_category": counts,
+        },
+    }
 
-            if len(pending_batch) >= BATCH_SIZE:
-                try:
-                    saved_items = batch_append_to_gist(pending_batch, file_name=gist_file_name)
-                    for item in saved_items:
-                        final_results.append({"ok": True, "name": item["name"], "url": item["url"]})
-                    pending_batch = []
-                except Exception as e:
-                    for item in pending_batch:
-                        final_results.append({
-                            "ok": True,
-                            "name": item["name"],
-                            "url": item["url"],
-                            "warning": f"图片已上传但 Gist 阶段同步失败: {str(e)}"
-                        })
-                    pending_batch = []
 
-        if pending_batch:
-            try:
-                saved_items = batch_append_to_gist(pending_batch, file_name=gist_file_name)
-                for item in saved_items:
-                    final_results.append({"ok": True, "name": item["name"], "url": item["url"]})
-            except Exception as e:
-                for item in pending_batch:
-                    final_results.append({
-                        "ok": True,
-                        "name": item["name"],
-                        "url": item["url"],
-                        "warning": f"图片已上传但 Gist 最后同步失败: {str(e)}"
-                    })
+def delete_local_item(category: str, rel_path: str, url: str) -> dict:
+    category = normalize_category(category or category_from_path(rel_path))
+    rel_path = safe_rel_path(rel_path)
+    url = (url or "").strip()
 
-        if not final_results:
-            return jsonify({"error": "没有处理任何文件"}), 400
+    with STORAGE_LOCK:
+        content = read_catalog_unlocked(category)
 
-        if len(images) == 1 and len(final_results) == 1:
-            r = final_results[0]
-            if r.get("ok"):
-                return jsonify({"success": True, "name": r.get("name"), "url": r.get("url")}), 200
-            else:
-                return jsonify({"error": r.get("error")}), 400
+        def matches(item: dict) -> bool:
+            item_path = item.get("path", "")
+            item_url = item.get("url", "")
+            if rel_path and item_path == rel_path:
+                return True
+            if url and item_url == url:
+                return True
+            return False
 
-        return jsonify({"success": True, "results": final_results}), 200
+        matched = [item for item in content.get("icons") or [] if matches(item)]
+        if not matched:
+            raise Exception("未找到对应记录")
 
-    except Exception as e:
-        return jsonify({"error": "服务器内部错误", "details": str(e)}), 500
+        file_deleted = False
+        if rel_path:
+            target = resolve_media_path(rel_path)
+            if target.exists():
+                target.unlink()
+                file_deleted = True
 
-@app.route("/api/finalize_batch", methods=["POST"])
-def api_finalize_batch():
-    return jsonify({"success": True, "message": "Batch is now handled automatically in upload"}), 200
+        content["icons"] = [item for item in content.get("icons") or [] if not matches(item)]
+        write_catalog_unlocked(category, content)
 
-# ===================== AI 抠图相关 (保持不变) =====================
+    return {
+        "removed": len(matched),
+        "file_deleted": file_deleted,
+        "category": category,
+        "path": rel_path,
+    }
+
+
+def set_signed_cookie(response, key: str, payload: dict, max_age: int) -> None:
+    response.set_cookie(
+        key,
+        serializer.dumps(payload),
+        max_age=max_age,
+        httponly=True,
+        samesite="Lax",
+        secure=COOKIE_SECURE,
+    )
+
+
+def check_signed_cookie(key: str, max_age: int) -> bool:
+    raw = request.cookies.get(key, "")
+    try:
+        serializer.loads(raw, max_age=max_age)
+        return True
+    except (BadSignature, SignatureExpired):
+        return False
+    except Exception:
+        return False
+
+
+def require_admin(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        if not ADMIN_ENABLED:
+            return jsonify({"ok": False, "message": "管理后台未启用"}), 403
+        if not check_signed_cookie("admin_auth", ADMIN_COOKIE_MAX_AGE):
+            return jsonify({"ok": False, "message": "未登录或会话已过期"}), 401
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+
+# ===== AI cutout providers =====
 
 def call_clipdrop_remove_bg(image):
-    api_key = os.getenv("CLIPDROP_API_KEY", "").strip()
+    api_key = (os.getenv("CLIPDROP_API_KEY", "") or "").strip()
     if not api_key:
         raise Exception("CLIPDROP_API_KEY 未配置")
     url = "https://clipdrop-api.co/remove-background/v1"
     headers = {"x-api-key": api_key}
     files = {"image_file": (image.filename, image.stream, image.mimetype)}
-    r = requests.post(url, headers=headers, files=files, timeout=60)
-    if r.status_code != 200:
-        raise Exception(f"Clipdrop error: {r.status_code}")
-    return r.content
+    response = requests.post(url, headers=headers, files=files, timeout=60)
+    if response.status_code != 200:
+        raise Exception(f"Clipdrop error: {response.status_code}")
+    return response.content
+
 
 def call_removebg_remove_bg(image):
-    api_key = os.getenv("REMOVEBG_API_KEY", "").strip()
+    api_key = (os.getenv("REMOVEBG_API_KEY", "") or "").strip()
     if not api_key:
         raise Exception("REMOVEBG_API_KEY 未配置")
     url = "https://api.remove.bg/v1.0/removebg"
     headers = {"X-Api-Key": api_key}
     files = {"image_file": (image.filename, image.stream, image.mimetype)}
     data = {"size": "auto"}
-    r = requests.post(url, headers=headers, files=files, data=data, timeout=60)
-    if r.status_code != 200:
-        raise Exception(f"Removebg error: {r.status_code}")
-    return r.content
+    response = requests.post(url, headers=headers, files=files, data=data, timeout=60)
+    if response.status_code != 200:
+        raise Exception(f"Remove.bg error: {response.status_code}")
+    return response.content
+
 
 def call_custom_remove_bg(image):
-    custom_url = os.getenv("CUSTOM_AI_URL", "").strip()
+    custom_url = (os.getenv("CUSTOM_AI_URL", "") or "").strip()
     if not custom_url:
         raise Exception("CUSTOM_AI_URL 未配置")
-    file_field = os.getenv("CUSTOM_AI_FILE_FIELD", "image").strip() or "image"
-    auth_header = os.getenv("CUSTOM_AI_AUTH_HEADER", "Authorization").strip() or "Authorization"
-    auth_prefix = os.getenv("CUSTOM_AI_AUTH_PREFIX", "").strip()
-    api_key = os.getenv("CUSTOM_AI_API_KEY", "").strip()
+
+    file_field = (os.getenv("CUSTOM_AI_FILE_FIELD", "image") or "image").strip()
+    auth_header = (os.getenv("CUSTOM_AI_AUTH_HEADER", "Authorization") or "Authorization").strip()
+    auth_prefix = (os.getenv("CUSTOM_AI_AUTH_PREFIX", "") or "").strip()
+    api_key = (os.getenv("CUSTOM_AI_API_KEY", "") or "").strip()
+
     headers = {}
     if api_key:
         headers[auth_header] = f"{auth_prefix}{api_key}"
-    files = {file_field: (image.filename, image.stream, image.mimetype)}
-    r = requests.post(custom_url, headers=headers, files=files, timeout=90)
-    if r.status_code != 200:
-        raise Exception(f"Custom AI error: {r.status_code}")
-    return r.content
 
-@app.route("/api/ai_cutout", methods=["POST"])
+    files = {file_field: (image.filename, image.stream, image.mimetype)}
+    response = requests.post(custom_url, headers=headers, files=files, timeout=90)
+    if response.status_code != 200:
+        raise Exception(f"Custom AI error: {response.status_code}")
+    return response.content
+
+
+# ===== bootstrap =====
+
+ensure_storage()
+
+
+# ===== routes =====
+
+@app.get("/healthz")
+def healthz():
+    return jsonify({"ok": True})
+
+
+@app.get("/media/<path:path>")
+def serve_media(path: str):
+    try:
+        safe_path = safe_rel_path(path)
+        resolve_media_path(safe_path)
+        return send_from_directory(IMAGE_ROOT, safe_path)
+    except Exception:
+        abort(404)
+
+
+@app.get("/icons.json")
+def icons_json():
+    return Response(
+        json.dumps(catalog_for_response("default"), ensure_ascii=False, indent=2),
+        mimetype="application/json",
+    )
+
+
+@app.get("/icons-square.json")
+def icons_square_json():
+    return Response(
+        json.dumps(catalog_for_response("square"), ensure_ascii=False, indent=2),
+        mimetype="application/json",
+    )
+
+
+@app.get("/icons-circle.json")
+def icons_circle_json():
+    return Response(
+        json.dumps(catalog_for_response("circle"), ensure_ascii=False, indent=2),
+        mimetype="application/json",
+    )
+
+
+@app.get("/icons-transparent.json")
+def icons_transparent_json():
+    return Response(
+        json.dumps(catalog_for_response("transparent"), ensure_ascii=False, indent=2),
+        mimetype="application/json",
+    )
+
+
+@app.get("/")
+def home():
+    categories = [
+        {
+            "key": key,
+            "label": CATEGORY_CONFIG[key]["label"],
+            "json_file": CATEGORY_CONFIG[key]["json_file"],
+        }
+        for key in CATEGORY_ORDER
+    ]
+    return render_template(
+        "index.html",
+        bg_api=RANDOM_BG_API,
+        categories=categories,
+        admin_enabled=ADMIN_ENABLED,
+        library_title=LIBRARY_TITLE,
+    )
+
+
+@app.get("/github")
+def legacy_github_route():
+    return redirect(url_for("home"))
+
+
+@app.get("/editor")
+def editor():
+    return render_template(
+        "editor.html",
+        custom_ai_enabled=CUSTOM_AI_ENABLED,
+        admin_enabled=ADMIN_ENABLED,
+        bg_api=RANDOM_BG_API,
+        library_title=LIBRARY_TITLE,
+    )
+
+
+@app.get("/manage")
+def manage_page():
+    if not ADMIN_ENABLED:
+        return "Admin disabled", 403
+    return render_template(
+        "manage.html",
+        bg_api=RANDOM_BG_API,
+        library_title=LIBRARY_TITLE,
+        icons_json=url_for("icons_json"),
+    )
+
+
+@app.post("/api/admin/login")
+def api_admin_login():
+    if not ADMIN_ENABLED:
+        return jsonify({"ok": False, "message": "管理后台未启用"}), 403
+
+    data = request.get_json(silent=True) or {}
+    password = (data.get("password") or "").strip()
+    if not ADMIN_PASSWORD:
+        return jsonify({"ok": False, "message": "ADMIN_PASSWORD 未配置"}), 500
+    if password != ADMIN_PASSWORD:
+        return jsonify({"ok": False, "message": "密码错误"}), 403
+
+    response = jsonify({"ok": True})
+    set_signed_cookie(response, "admin_auth", {"admin": 1}, ADMIN_COOKIE_MAX_AGE)
+    return response
+
+
+@app.post("/api/admin/logout")
+@require_admin
+def api_admin_logout():
+    response = jsonify({"ok": True})
+    response.delete_cookie("admin_auth")
+    return response
+
+
+@app.get("/api/admin/images")
+@require_admin
+def api_admin_images():
+    try:
+        page = int(request.args.get("page", "1"))
+    except ValueError:
+        page = 1
+    query = (request.args.get("q") or "").strip()
+
+    payload = list_admin_items(page=page, q=query)
+    return jsonify(
+        {
+            "ok": True,
+            "items": payload["items"],
+            "pager": payload["pager"],
+            "catalog_stats": payload["catalog_stats"],
+            "raw_icons_json": url_for("icons_json", _external=True),
+        }
+    )
+
+
+@app.post("/api/admin/delete")
+@require_admin
+def api_admin_delete():
+    data = request.get_json(silent=True) or {}
+    items = data.get("items") or []
+    if not isinstance(items, list) or not items:
+        return jsonify({"ok": False, "message": "items 不能为空"}), 400
+
+    results = []
+    removed_total = 0
+    deleted_files = 0
+
+    for item in items:
+        rel_path = safe_rel_path(item.get("path") or item.get("key") or "")
+        category = normalize_category(item.get("category") or category_from_path(rel_path))
+        url = (item.get("url") or "").strip()
+
+        try:
+            result = delete_local_item(category=category, rel_path=rel_path, url=url)
+            removed_total += result["removed"]
+            deleted_files += 1 if result["file_deleted"] else 0
+            results.append({"ok": True, **result})
+        except Exception as exc:
+            results.append(
+                {
+                    "ok": False,
+                    "category": category,
+                    "path": rel_path,
+                    "error": str(exc),
+                }
+            )
+
+    return jsonify(
+        {
+            "ok": True,
+            "results": results,
+            "summary": {
+                "removed": removed_total,
+                "deleted_files": deleted_files,
+            },
+        }
+    )
+
+
+@app.post("/api/upload")
+def upload_image():
+    try:
+        images = request.files.getlist("source")
+        if not images:
+            return jsonify({"error": "缺少图片"}), 400
+
+        category = normalize_category(
+            request.form.get("category") or request.form.get("github_folder") or "default"
+        )
+        manual_name = (request.form.get("name") or "").strip()
+
+        results = []
+        for image in images:
+            if not image or not getattr(image, "filename", ""):
+                continue
+
+            auto_name = Path(image.filename).stem or "image"
+            desired_name = manual_name if len(images) == 1 and manual_name else auto_name
+
+            try:
+                saved = save_local_upload(image, desired_name, category)
+                results.append(
+                    {
+                        "ok": True,
+                        "name": saved["name"],
+                        "url": saved["url"],
+                        "category": saved["category"],
+                    }
+                )
+            except Exception as exc:
+                results.append(
+                    {
+                        "ok": False,
+                        "name": desired_name,
+                        "error": str(exc),
+                        "category": category,
+                    }
+                )
+
+        if not results:
+            return jsonify({"error": "没有处理任何文件"}), 400
+
+        if len(results) == 1 and len(images) == 1:
+            first = results[0]
+            if first.get("ok"):
+                return jsonify(
+                    {
+                        "success": True,
+                        "name": first["name"],
+                        "url": first["url"],
+                        "category": first["category"],
+                    }
+                )
+            return jsonify({"error": first.get("error") or "上传失败"}), 400
+
+        return jsonify({"success": True, "results": results}), 200
+    except Exception as exc:
+        return jsonify({"error": "服务器内部错误", "details": str(exc)}), 500
+
+
+@app.post("/api/finalize_batch")
+def api_finalize_batch():
+    return jsonify({"success": True, "message": "批量上传已直接在 /api/upload 中处理"}), 200
+
+
+@app.post("/api/ai_cutout")
 def api_ai_cutout_default():
     try:
         image = request.files.get("image")
         if not image:
             return jsonify({"error": "缺少图片"}), 400
+
         candidates = []
-        if os.getenv("CLIPDROP_API_KEY", "").strip():
+        if (os.getenv("CLIPDROP_API_KEY", "") or "").strip():
             candidates.append(call_clipdrop_remove_bg)
-        if os.getenv("REMOVEBG_API_KEY", "").strip():
+        if (os.getenv("REMOVEBG_API_KEY", "") or "").strip():
             candidates.append(call_removebg_remove_bg)
         if not candidates:
-            return jsonify({"error": "默认AI未配置"}), 500
+            return jsonify({"error": "默认 AI 未配置"}), 500
+
         random.shuffle(candidates)
-        last_err = None
+        last_error = None
         for fn in candidates:
             try:
                 return Response(fn(image), mimetype="image/png")
-            except Exception as e:
-                last_err = str(e)
-                continue
-        return jsonify({"error": "AI抠图全失败", "details": last_err}), 500
-    except Exception as e:
-        return jsonify({"error": "AI抠图失败", "details": str(e)}), 500
+            except Exception as exc:
+                last_error = str(exc)
 
-@app.route("/api/ai/custom/auth", methods=["POST"])
+        return jsonify({"error": "AI 抠图全部失败", "details": last_error}), 500
+    except Exception as exc:
+        return jsonify({"error": "AI 抠图失败", "details": str(exc)}), 500
+
+
+@app.post("/api/ai/custom/auth")
 def api_custom_ai_auth():
     if not CUSTOM_AI_ENABLED:
         return jsonify({"error": "未启用"}), 403
+
     data = request.get_json(silent=True) or {}
     if (data.get("password") or "").strip() != CUSTOM_AI_PASSWORD:
         return jsonify({"error": "密码错误"}), 403
-    resp = jsonify({"success": True})
-    token = serializer.dumps({"ok": 1})
-    resp.set_cookie("custom_ai_auth", token, max_age=86400, httponly=True, samesite="Lax", secure=True)
-    return resp
 
-def _check_custom_ai_cookie():
-    raw = request.cookies.get("custom_ai_auth", "")
-    try:
-        serializer.loads(raw, max_age=86400)
-        return True
-    except:
-        return False
+    response = jsonify({"success": True})
+    set_signed_cookie(response, "custom_ai_auth", {"ok": 1}, 86400)
+    return response
 
-@app.route("/api/ai_cutout_custom", methods=["POST"])
+
+@app.post("/api/ai_cutout_custom")
 def api_ai_cutout_custom():
     try:
         if not CUSTOM_AI_ENABLED:
             return jsonify({"error": "未启用"}), 403
-        if not _check_custom_ai_cookie():
+        if not check_signed_cookie("custom_ai_auth", 86400):
             return jsonify({"error": "未解锁"}), 403
+
         image = request.files.get("image")
         if not image:
             return jsonify({"error": "缺少图片"}), 400
         return Response(call_custom_remove_bg(image), mimetype="image/png")
-    except Exception as e:
-        return jsonify({"error": "自定义AI失败", "details": str(e)}), 500
+    except Exception as exc:
+        return jsonify({"error": "自定义 AI 失败", "details": str(exc)}), 500
+
 
 if __name__ == "__main__":
-    app.run()
+    app.run(
+        host=(os.getenv("HOST", "0.0.0.0") or "0.0.0.0").strip(),
+        port=env_int("PORT", 8000),
+        debug=env_bool("FLASK_DEBUG", False),
+    )

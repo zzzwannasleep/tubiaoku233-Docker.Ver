@@ -485,7 +485,7 @@ function getUploadName() {
   return manual || originalFilenameBase || "icon";
 }
 
-async function uploadBlobToLibrary(blob, nameBase, suffix, githubFolder) {
+async function uploadBlobToLibrary(blob, nameBase, suffix, category) {
   const uploadMsg = el("uploadMsg");
   uploadMsg.textContent = "正在上传到图标库...";
 
@@ -495,7 +495,7 @@ async function uploadBlobToLibrary(blob, nameBase, suffix, githubFolder) {
   const fd = new FormData();
   fd.append("source", file);
   fd.append("name", nameBase);
-  if (githubFolder) fd.append("github_folder", githubFolder);
+  if (category) fd.append("category", category);
 
   try {
     const res = await fetch("/api/upload", { method: "POST", body: fd });
@@ -523,6 +523,13 @@ async function uploadCircleToLibrary() {
   if (!b) return alert("请先导入图片，并进行裁剪/抠图后再上传");
   const name = getUploadName();
   await uploadBlobToLibrary(b, name, "_circle", "circle");
+}
+
+async function uploadTransparentToLibrary() {
+  const b = await getSquareBlobFromCurrentMode();
+  if (!b) return alert("请先导入图片，并进行裁剪/抠图后再上传");
+  const name = getUploadName();
+  await uploadBlobToLibrary(b, name, "_transparent", "transparent");
 }
 
 /* ========== Mode switch ========== */
@@ -565,50 +572,6 @@ function resetAll() {
 
   showOnly("empty");
 }
-
-/* ========== Background switch ========== */
-(function () {
-  const randomImageURL = "https://www.loliapi.com/acg/";
-  const body = document.body;
-  if (!body.classList.contains("editor-body")) return;
-
-  function withCacheBuster(url) {
-    const join = url.includes("?") ? "&" : "?";
-    return `${url}${join}t=${Date.now()}`;
-  }
-
-  function applyRandomBg() {
-    const bgUrl = withCacheBuster(randomImageURL);
-    body.style.backgroundImage = `
-      url(${bgUrl}),
-      radial-gradient(900px 600px at 12% 18%, rgba(255,107,214,.25), transparent 60%),
-      radial-gradient(800px 520px at 85% 20%, rgba(57,213,255,.20), transparent 55%),
-      radial-gradient(900px 650px at 55% 92%, rgba(124,107,255,.18), transparent 60%),
-      linear-gradient(135deg, #ffe9f6, #e9f1ff, #eafff7)
-    `;
-    body.style.backgroundSize = "cover";
-    body.style.backgroundPosition = "center";
-    body.style.backgroundRepeat = "no-repeat";
-    body.style.backgroundAttachment = "fixed";
-  }
-
-  applyRandomBg();
-
-  document.addEventListener("click", (e) => {
-    const inTopbar = e.target.closest(".editor-topbar");
-    const inLayout = e.target.closest(".editor-layout");
-    const inPanel = e.target.closest(".editor-panel");
-    const inStage = e.target.closest(".editor-stage");
-    if (inTopbar || inLayout || inPanel || inStage) return;
-    applyRandomBg();
-  }, { passive: true });
-
-  document.addEventListener("click", (e) => {
-    if (!e.shiftKey) return;
-    applyRandomBg();
-  }, { passive: true });
-})();
-
 
 /* ========== AI Cutout (default + custom mode2) ========== */
 
@@ -725,6 +688,7 @@ window.addEventListener("DOMContentLoaded", () => {
   // upload
   el("btnUploadSquare")?.addEventListener("click", uploadSquareToLibrary);
   el("btnUploadCircle")?.addEventListener("click", uploadCircleToLibrary);
+  el("btnUploadTransparent")?.addEventListener("click", uploadTransparentToLibrary);
 
 
 // AI cutout
