@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 import math
 import os
-import random
 import re
 import threading
 from functools import wraps
+from io import BytesIO
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
@@ -61,6 +61,8 @@ ADMIN_ENABLED = env_bool("ADMIN_ENABLED", False)
 ADMIN_PASSWORD = (os.getenv("ADMIN_PASSWORD", "") or "").strip()
 ADMIN_COOKIE_MAX_AGE = env_int("ADMIN_COOKIE_MAX_AGE", 86400)
 ADMIN_PAGE_SIZE = max(1, env_int("ADMIN_PAGE_SIZE", 24))
+REMBG_ENABLED = env_bool("REMBG_ENABLED", True)
+REMBG_MODEL = (os.getenv("REMBG_MODEL", "u2netp") or "u2netp").strip()
 CUSTOM_AI_ENABLED = env_bool("CUSTOM_AI_ENABLED", False)
 CUSTOM_AI_PASSWORD = (os.getenv("CUSTOM_AI_PASSWORD", "") or "").strip()
 
@@ -71,6 +73,7 @@ if max_upload_mb > 0:
 data_dir_raw = (os.getenv("APP_DATA_DIR", "") or "").strip()
 DATA_DIR = Path(data_dir_raw).expanduser().resolve() if data_dir_raw else (ROOT_DIR / "data").resolve()
 IMAGE_ROOT = DATA_DIR / "images"
+os.environ.setdefault("U2NET_HOME", str((DATA_DIR / ".u2net").resolve()))
 
 CATEGORY_ORDER = ["default", "square", "circle", "transparent"]
 CATEGORY_CONFIG = {
@@ -80,6 +83,9 @@ CATEGORY_CONFIG = {
     "transparent": {"json_file": "icons-transparent.json", "folder": "transparent", "label": "透明"},
 }
 STORAGE_LOCK = threading.RLock()
+REMBG_SESSION_LOCK = threading.RLock()
+REMBG_SESSION = None
+REMBG_SESSION_MODEL = None
 
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev_secret_change_me")
 serializer = URLSafeTimedSerializer(app.secret_key)
@@ -142,6 +148,7 @@ def ensure_storage() -> None:
     with STORAGE_LOCK:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         IMAGE_ROOT.mkdir(parents=True, exist_ok=True)
+        Path(os.environ["U2NET_HOME"]).mkdir(parents=True, exist_ok=True)
         for key in CATEGORY_ORDER:
             image_dir(key).mkdir(parents=True, exist_ok=True)
             path = catalog_path(key)
@@ -500,31 +507,52 @@ def require_admin(fn):
 
 # ===== AI cutout providers =====
 
-def call_clipdrop_remove_bg(image):
-    api_key = (os.getenv("CLIPDROP_API_KEY", "") or "").strip()
-    if not api_key:
-        raise Exception("CLIPDROP_API_KEY 未配置")
-    url = "https://clipdrop-api.co/remove-background/v1"
-    headers = {"x-api-key": api_key}
-    files = {"image_file": (image.filename, image.stream, image.mimetype)}
-    response = requests.post(url, headers=headers, files=files, timeout=60)
-    if response.status_code != 200:
-        raise Exception(f"Clipdrop error: {response.status_code}")
-    return response.content
+def get_rembg_session():
+    global REMBG_SESSION
+    global REMBG_SESSION_MODEL
+
+    if not REMBG_ENABLED:
+        raise Exception("REMBG_ENABLED 已关闭")
+
+    with REMBG_SESSION_LOCK:
+        if REMBG_SESSION is not None and REMBG_SESSION_MODEL == REMBG_MODEL:
+            return REMBG_SESSION
+
+        try:
+            from rembg import new_session
+        except ImportError as exc:
+            raise Exception("rembg 未安装，请先安装 requirements.txt 里的依赖") from exc
+
+        REMBG_SESSION = new_session(model_name=REMBG_MODEL)
+        REMBG_SESSION_MODEL = REMBG_MODEL
+        return REMBG_SESSION
 
 
-def call_removebg_remove_bg(image):
-    api_key = (os.getenv("REMOVEBG_API_KEY", "") or "").strip()
-    if not api_key:
-        raise Exception("REMOVEBG_API_KEY 未配置")
-    url = "https://api.remove.bg/v1.0/removebg"
-    headers = {"X-Api-Key": api_key}
-    files = {"image_file": (image.filename, image.stream, image.mimetype)}
-    data = {"size": "auto"}
-    response = requests.post(url, headers=headers, files=files, data=data, timeout=60)
-    if response.status_code != 200:
-        raise Exception(f"Remove.bg error: {response.status_code}")
-    return response.content
+def call_rembg_remove_bg(image):
+    if not REMBG_ENABLED:
+        raise Exception("REMBG_ENABLED 已关闭")
+
+    try:
+        image.stream.seek(0)
+    except Exception:
+        pass
+    raw_bytes = image.read()
+    if not raw_bytes:
+        raise Exception("缺少有效图片内容")
+
+    try:
+        from rembg import remove
+    except ImportError as exc:
+        raise Exception("rembg 未安装，请先安装 requirements.txt 里的依赖") from exc
+
+    output = remove(raw_bytes, session=get_rembg_session())
+    if isinstance(output, bytes):
+        return output
+    if hasattr(output, "save"):
+        buffer = BytesIO()
+        output.save(buffer, format="PNG")
+        return buffer.getvalue()
+    raise Exception("rembg 返回了无法识别的结果类型")
 
 
 def call_custom_remove_bg(image):
@@ -811,24 +839,7 @@ def api_ai_cutout_default():
         image = request.files.get("image")
         if not image:
             return jsonify({"error": "缺少图片"}), 400
-
-        candidates = []
-        if (os.getenv("CLIPDROP_API_KEY", "") or "").strip():
-            candidates.append(call_clipdrop_remove_bg)
-        if (os.getenv("REMOVEBG_API_KEY", "") or "").strip():
-            candidates.append(call_removebg_remove_bg)
-        if not candidates:
-            return jsonify({"error": "默认 AI 未配置"}), 500
-
-        random.shuffle(candidates)
-        last_error = None
-        for fn in candidates:
-            try:
-                return Response(fn(image), mimetype="image/png")
-            except Exception as exc:
-                last_error = str(exc)
-
-        return jsonify({"error": "AI 抠图全部失败", "details": last_error}), 500
+        return Response(call_rembg_remove_bg(image), mimetype="image/png")
     except Exception as exc:
         return jsonify({"error": "AI 抠图失败", "details": str(exc)}), 500
 

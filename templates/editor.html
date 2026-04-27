@@ -103,7 +103,7 @@
       <div class="panel-block">
         <div class="panel-title">6) AI 抠图</div>
         <div class="btn-col">
-          <button class="tool-btn" id="btnAICutoutDefault">默认 AI 抠图</button>
+          <button class="tool-btn" id="btnAICutoutDefault">本地 AI 抠图（rembg）</button>
 
           {% if custom_ai_enabled %}
           <button class="tool-btn" id="btnUnlockCustomAI">解锁自定义 AI</button>
@@ -111,6 +111,10 @@
           {% endif %}
         </div>
         <div id="aiMsg" class="upload-msg"></div>
+
+        <div class="panel-hint">
+          默认使用本地 `rembg` 模型，不再依赖第三方抠图 API。
+        </div>
 
         {% if custom_ai_enabled %}
         <div class="panel-hint">

@@ -7,6 +7,7 @@
 - 上传图片后，文件保存在本地目录
 - `icons.json` / `icons-square.json` / `icons-circle.json` / `icons-transparent.json` 由当前服务直接生成
 - `/manage` 直接管理本地文件和本地 JSON 记录
+- 默认 AI 抠图改为本地 `rembg`
 - 不再依赖 `vercel.json`
 - 不再依赖 GitHub Gist 作为索引存储
 - 不再依赖 GitHub Repo 作为图床
@@ -122,8 +123,9 @@ http://127.0.0.1:8000
 
 | 变量 | 说明 |
 | --- | --- |
-| `CLIPDROP_API_KEY` | 默认 AI 抠图通道 1 |
-| `REMOVEBG_API_KEY` | 默认 AI 抠图通道 2 |
+| `REMBG_ENABLED` | 是否启用本地 `rembg` 抠图，默认 `1` |
+| `REMBG_MODEL` | 默认模型名，默认 `u2netp` |
+| `U2NET_HOME` | 可选，自定义 `rembg` 模型缓存目录 |
 | `CUSTOM_AI_ENABLED` | 是否启用自定义 AI |
 | `CUSTOM_AI_PASSWORD` | 自定义 AI 解锁密码 |
 | `CUSTOM_AI_URL` | 自定义 AI 接口地址 |
@@ -132,11 +134,20 @@ http://127.0.0.1:8000
 | `CUSTOM_AI_AUTH_HEADER` | 鉴权 Header，默认 `Authorization` |
 | `CUSTOM_AI_AUTH_PREFIX` | 鉴权前缀，比如 `Bearer ` |
 
+### rembg 说明
+
+- 默认镜像会在构建阶段预热 `u2netp` 模型
+- 默认 `/api/ai_cutout` 走本地 `rembg`，不再调用外部抠图 API
+- 如果你改了 `REMBG_MODEL`，运行时可能会首次下载对应模型
+- 本地直接运行时，默认模型目录会落在 `data/.u2net`
+- 如果你手动设置了 `U2NET_HOME`，就会改用你指定的目录
+
 ## Docker 设计说明
 
 - 容器内服务端口固定为 `8000`
 - 本地 `./data` 会挂载到容器内 `/app/data`
 - 图片和 JSON 都落在挂载卷里，容器重建不会丢
+- `rembg` 默认模型会在镜像构建阶段预下载
 - 服务使用 `gunicorn` 启动，适合长期运行
 
 ## GitHub Actions 构建镜像
