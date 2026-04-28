@@ -6,165 +6,170 @@
   <title>{{ library_title }} 编辑器</title>
 
   <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}" type="image/png">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/editor.css') }}?v=20260427A">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/editor.css') }}?v=20260428B">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.css">
-
-  <style>
-    .ani-bg{
-      position:fixed; inset:0;
-      background-size:cover;
-      background-position:center;
-      filter:saturate(1.2) contrast(1.05);
-      transform:scale(1.02);
-      z-index:-3;
-    }
-    .ani-overlay{
-      position:fixed; inset:0;
-      background:
-        radial-gradient(1000px 700px at 20% 10%, rgba(255,107,214,.25), transparent 60%),
-        radial-gradient(900px 650px at 85% 20%, rgba(101,247,255,.20), transparent 55%),
-        radial-gradient(1000px 800px at 50% 90%, rgba(156,123,255,.20), transparent 60%),
-        linear-gradient(180deg, rgba(0,0,0,.35), rgba(0,0,0,.55));
-      backdrop-filter: blur(2px);
-      z-index:-2;
-    }
-  </style>
 </head>
 
 <body class="editor-body" data-bg-api="{{ bg_api }}">
-  <div class="ani-bg" id="aniBg"></div>
-  <div class="ani-overlay"></div>
+  <div class="editor-bg" id="aniBg" aria-hidden="true"></div>
+  <div class="editor-noise" aria-hidden="true"></div>
 
-  <div class="editor-topbar">
-    <div class="topbar-left">
-      <a class="topbar-back" href="/">返回上传页</a>
-      <span class="topbar-title">{{ library_title }} 在线编辑器</span>
+  <div class="editor-shell">
+    <header class="editor-topbar">
+      <div class="topbar-left">
+        <a class="topbar-back" href="/">返回上传页</a>
+        <div class="topbar-copy">
+          <p class="topbar-eyebrow">Image workspace</p>
+          <h1 class="topbar-title">{{ library_title }} 图标编辑器</h1>
+        </div>
+      </div>
+
+      <div class="topbar-right">
+        {% if admin_enabled %}
+        <a class="mini-btn" href="/manage">管理后台</a>
+        {% endif %}
+        <button class="mini-btn" id="btnReset" type="button">清空并重置</button>
+      </div>
+    </header>
+
+    <div class="editor-layout">
+      <aside class="editor-sidebar">
+        <section class="tool-card">
+          <div class="card-head">
+            <div>
+              <p class="card-step">step 1</p>
+              <h3 class="card-title">导入原图</h3>
+            </div>
+            <span class="state-pill" id="filePill">未导入</span>
+          </div>
+
+          <input id="fileInput" class="sr-only" type="file" accept="image/*">
+          <label for="fileInput" class="file-drop">
+            <span class="file-drop-label">支持 PNG / JPG / WebP</span>
+            <strong class="file-drop-title">选择一张需要处理的图片</strong>
+            <span class="file-drop-meta" id="fileMeta">建议使用主体清晰、边缘完整的原图</span>
+          </label>
+        </section>
+
+        <section class="tool-card">
+          <div class="card-head">
+            <div>
+              <p class="card-step">step 2</p>
+              <h3 class="card-title">裁剪调整</h3>
+            </div>
+            <span class="state-pill state-pill--accent" id="modePill">裁剪中</span>
+          </div>
+
+          <div class="control-grid control-grid--2">
+            <button class="control-btn control-btn--accent" id="btnCropCenter" type="button">居中裁剪框</button>
+            <button class="control-btn" id="btnCropMax" type="button">铺满裁剪框</button>
+            <button class="control-btn" id="btnZoomIn" type="button">放大画面</button>
+            <button class="control-btn" id="btnZoomOut" type="button">缩小画面</button>
+          </div>
+
+          <button class="control-btn control-btn--soft control-btn--wide" id="btnViewReset" type="button">重置裁剪视图</button>
+          <p class="card-hint">输出会基于当前裁剪框生成 512 × 512 PNG。</p>
+        </section>
+
+        <section class="tool-card">
+          <div class="card-head">
+            <div>
+              <p class="card-step">step 3</p>
+              <h3 class="card-title">AI 抠图</h3>
+            </div>
+          </div>
+
+          <button class="control-btn control-btn--accent control-btn--wide" id="btnAICutoutDefault" type="button">执行默认 AI 抠图</button>
+          <div id="aiMsg" class="message-box is-empty"></div>
+          <p class="card-hint">会基于当前裁剪结果去除背景，并回到裁剪画布继续微调位置。</p>
+        </section>
+
+        <section class="tool-card">
+          <div class="card-head">
+            <div>
+              <p class="card-step">step 4</p>
+              <h3 class="card-title">导出预览</h3>
+            </div>
+          </div>
+
+          <div class="control-grid control-grid--2">
+            <button class="control-btn control-btn--accent" id="btnExportSquare" type="button">方形 PNG</button>
+            <button class="control-btn" id="btnExportCircle" type="button">圆形 PNG</button>
+          </div>
+          <p class="card-hint">圆形导出会自动套用透明圆形蒙版。</p>
+        </section>
+
+        <section class="tool-card">
+          <div class="card-head">
+            <div>
+              <p class="card-step">step 5</p>
+              <h3 class="card-title">上传到图标库</h3>
+            </div>
+          </div>
+
+          <label class="field-label" for="uploadName">图片名称</label>
+          <input id="uploadName" type="text" placeholder="不填则自动使用文件名">
+
+          <div class="control-stack">
+            <button class="control-btn control-btn--accent" id="btnUploadSquare" type="button">上传到方形分类</button>
+            <button class="control-btn" id="btnUploadCircle" type="button">上传到圆形分类</button>
+            <button class="control-btn" id="btnUploadTransparent" type="button">上传到透明分类</button>
+          </div>
+
+          <div id="uploadMsg" class="message-box is-empty"></div>
+          <p class="card-hint">如果需要透明背景，建议先执行 AI 抠图再上传到透明分类。</p>
+        </section>
+      </aside>
+
+      <main class="editor-workspace">
+        <section class="stage-card">
+          <div class="stage-header">
+            <div>
+              <p class="stage-eyebrow">实时画布</p>
+              <h2 class="stage-title" id="stageTitle">请先导入一张图片</h2>
+              <p class="stage-copy" id="stageCopy">导入后可以直接裁剪、AI 抠图、导出和上传。</p>
+            </div>
+
+            <div class="stage-meta">
+              <span class="state-pill" id="previewPill">未导出</span>
+            </div>
+          </div>
+
+          <div class="workspace-grid">
+            <section class="canvas-card">
+              <div id="cropWrap" class="stage-box" style="display:none;">
+                <img id="cropImage" alt="crop">
+              </div>
+
+              <div id="emptyWrap" class="stage-empty">
+                <div class="empty-badge">ready</div>
+                <div class="empty-title">导入图片后开始处理</div>
+                <div class="empty-sub">右侧会显示裁剪画布，导出预览会出现在旁边的预览卡片里。</div>
+              </div>
+            </section>
+
+            <aside class="preview-card">
+              <div class="card-head">
+                <div>
+                  <p class="card-step">preview</p>
+                  <h3 class="card-title">导出预览</h3>
+                </div>
+                <span class="state-pill" id="previewSizePill">PNG</span>
+              </div>
+
+              <div id="exportWrap" class="export-wrap">
+                <div id="exportEmpty" class="export-empty">导出后的图片会显示在这里，你可以右键或长按保存。</div>
+                <img id="exportImg" alt="export" style="display:none;">
+              </div>
+            </aside>
+          </div>
+        </section>
+      </main>
     </div>
-    <div class="topbar-right">
-      {% if admin_enabled %}
-      <a class="mini-btn" href="/manage" style="text-decoration:none;display:inline-flex;align-items:center;gap:6px;">
-        管理后台
-      </a>
-      {% endif %}
-      <button class="mini-btn" id="btnReset">重置</button>
-    </div>
-  </div>
-
-  <div class="editor-layout">
-    <aside class="editor-panel">
-      <div class="panel-block">
-        <div class="panel-title">1) 导入图片</div>
-        <input id="fileInput" type="file" accept="image/*">
-        <div class="panel-hint">建议上传 PNG 或清晰 JPG</div>
-      </div>
-
-      <div class="panel-block">
-        <div class="panel-title">2) 选择模式</div>
-        <div class="btn-col">
-          <button class="tool-btn" id="btnModeCrop">进入裁剪模式（1:1）</button>
-          <button class="tool-btn" id="btnModeCutout">进入手动抠图模式</button>
-        </div>
-        <div class="panel-hint">
-          裁剪模式用于生成标准方图，抠图模式适合做透明图标。
-        </div>
-      </div>
-
-      <div class="panel-block">
-        <div class="panel-title">3) 裁剪工具</div>
-        <div class="btn-col">
-          <button class="tool-btn" id="btnCropCenter">裁剪框居中</button>
-          <button class="tool-btn" id="btnCropMax">裁剪框最大化</button>
-          <button class="tool-btn" id="btnZoomIn">放大</button>
-          <button class="tool-btn" id="btnZoomOut">缩小</button>
-          <button class="tool-btn" id="btnViewReset">重置视图</button>
-        </div>
-      </div>
-
-      <div class="panel-block">
-        <div class="panel-title">4) 抠图画笔</div>
-        <label class="inline-row">
-          画笔大小
-          <input id="brushSize" type="range" min="5" max="80" value="25">
-          <span id="brushSizeText">25</span>
-        </label>
-        <button class="tool-btn" id="btnUndo">撤销一步</button>
-        <div class="panel-hint">仅在手动抠图模式下生效</div>
-      </div>
-
-      <div class="panel-block">
-        <div class="panel-title">5) 导出预览</div>
-        <div class="btn-col">
-          <button class="tool-btn" id="btnExportSquare">导出方形 PNG</button>
-          <button class="tool-btn" id="btnExportCircle">导出圆形 PNG</button>
-        </div>
-        <div class="panel-hint">圆形导出会自动加透明圆形遮罩。</div>
-      </div>
-
-      <div class="panel-block">
-        <div class="panel-title">6) AI 抠图</div>
-        <div class="btn-col">
-          <button class="tool-btn" id="btnAICutoutDefault">AI抠图</button>
-        </div>
-        <div id="aiMsg" class="upload-msg"></div>
-
-        <div class="panel-hint">
-          使用本地模型执行抠图，不依赖第三方抠图 API。
-        </div>
-      </div>
-
-      <div class="panel-block">
-        <div class="panel-title">7) 一键上传到图标库</div>
-
-        <label class="panel-label" for="uploadName">名称（可选）</label>
-        <input id="uploadName" type="text" placeholder="不填则自动使用文件名或默认名称">
-
-        <div class="panel-hint">
-          方形、圆形、透明图会写入各自的本地 JSON 与目录。
-        </div>
-
-        <div class="btn-col">
-          <button class="tool-btn" id="btnUploadSquare">上传到方形分类</button>
-          <button class="tool-btn" id="btnUploadCircle">上传到圆形分类</button>
-          <button class="tool-btn" id="btnUploadTransparent">上传到透明分类</button>
-        </div>
-
-        <div id="uploadMsg" class="upload-msg"></div>
-      </div>
-
-      <div class="panel-block">
-        <div class="panel-title">使用说明</div>
-        <ol class="panel-ol">
-          <li>先导入一张图片。</li>
-          <li>裁剪模式适合做标准头像框，抠图模式适合去背景。</li>
-          <li>导出预览确认后，可以直接上传到对应分类。</li>
-          <li>需要固定完整外链时，请在部署时配置 `PUBLIC_BASE_URL`。</li>
-        </ol>
-      </div>
-    </aside>
-
-    <main class="editor-stage">
-      <div id="cropWrap" class="stage-box" style="display:none;">
-        <img id="cropImage" alt="crop" />
-      </div>
-
-      <div id="cutoutWrap" class="stage-box" style="display:none;">
-        <canvas id="cutoutCanvas"></canvas>
-      </div>
-
-      <div id="emptyWrap" class="stage-empty">
-        <div class="empty-title">请先导入一张图片</div>
-        <div class="empty-sub">支持裁剪、手动抠图、AI 抠图以及直接上传。</div>
-      </div>
-
-      <div id="exportWrap" class="export-wrap" style="display:none;">
-        <div class="export-title">导出预览（右键或长按保存）</div>
-        <img id="exportImg" alt="export" />
-      </div>
-    </main>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.js"></script>
-  <script src="{{ url_for('static', filename='js/editor.js') }}?v=20260427A"></script>
+  <script src="{{ url_for('static', filename='js/editor.js') }}?v=20260428B"></script>
   <script>
     const BG_API = "{{ bg_api }}";
     const bgEl = document.getElementById("aniBg");
