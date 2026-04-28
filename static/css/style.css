@@ -1,4 +1,4 @@
-/* ========== ACG / 二次元风格 UI（稳定版） ========== */
+/* ========== ACG / 二次元风格 UI（PC 默认 + 手机自动切换） ========== */
 :root{
   --bg1:#ffe9f6;
   --bg2:#e9f1ff;
@@ -18,8 +18,15 @@
   --radius: 22px;
 }
 
-/* Reset */
-*{ margin:0; padding:0; box-sizing:border-box; }
+*{
+  margin:0;
+  padding:0;
+  box-sizing:border-box;
+}
+
+html{
+  scroll-behavior:smooth;
+}
 
 body{
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC",
@@ -30,8 +37,6 @@ body{
   justify-content:center;
   align-items:center;
   padding: 18px;
-
-  /* 如果 JS 背景图没加载，这个渐变兜底 */
   background:
     radial-gradient(900px 600px at 12% 18%, rgba(255,107,214,.25), transparent 60%),
     radial-gradient(800px 520px at 85% 20%, rgba(57,213,255,.20), transparent 55%),
@@ -39,7 +44,6 @@ body{
     linear-gradient(135deg, var(--bg1), var(--bg2), var(--bg3));
 }
 
-/* 卡片容器：玻璃拟态 + 软阴影 */
 .container{
   width:100%;
   max-width:560px;
@@ -54,7 +58,6 @@ body{
   overflow: hidden;
 }
 
-/* 卡片顶部装饰 */
 .container::before{
   content:"";
   position:absolute;
@@ -81,7 +84,9 @@ h1{
   text-shadow: 0 10px 22px rgba(124,107,255,.10);
 }
 
-.form-group{ margin-bottom: 14px; }
+.form-group{
+  margin-bottom: 14px;
+}
 
 label{
   display:block;
@@ -90,7 +95,6 @@ label{
   color: var(--muted);
 }
 
-/* 输入框 */
 input[type="text"],
 input[type="file"]{
   width:100%;
@@ -117,7 +121,7 @@ input[type="file"]:focus{
   transform: translateY(-1px);
 }
 
-/* 文件按钮（WebKit） */
+input[type="file"]::file-selector-button,
 input[type="file"]::-webkit-file-upload-button{
   border: none;
   padding: 10px 12px;
@@ -129,23 +133,24 @@ input[type="file"]::-webkit-file-upload-button{
   box-shadow: 0 10px 18px rgba(57,213,255,.18);
   transition: transform .15s ease, filter .2s ease;
 }
+
+input[type="file"]::file-selector-button:hover,
 input[type="file"]::-webkit-file-upload-button:hover{
   filter: brightness(1.05);
   transform: translateY(-1px);
 }
 
-/* 按钮行 */
 .btn-row{
   display:flex;
   gap:12px;
   justify-content:center;
   align-items:center;
 }
+
 .btn-row + .btn-row{
   margin-top: 12px;
 }
 
-/* ✅ 主按钮（改成 .upload-btn，让 <a> 也吃到同款样式） */
 .upload-btn{
   flex: 1;
   border: none;
@@ -156,15 +161,14 @@ input[type="file"]::-webkit-file-upload-button:hover{
   letter-spacing: .4px;
   cursor: pointer;
   color: #fff;
-
   background: linear-gradient(90deg, var(--p1), var(--p2), var(--p3));
   box-shadow:
     0 16px 28px rgba(124,107,255,.20),
     0 10px 18px rgba(255,107,214,.12);
-  transition: transform .12s ease, filter .2s ease, box-shadow .2s ease;
+  transition: transform .12s ease, filter .2s ease, box-shadow .2s ease, opacity .2s ease;
+  touch-action: manipulation;
 }
 
-/* ✅ 让 a.upload-btn 看起来跟按钮一样 */
 .link-btn{
   display:flex;
   align-items:center;
@@ -185,20 +189,35 @@ input[type="file"]::-webkit-file-upload-button:hover{
   transform: translateY(0px) scale(.99);
 }
 
-/* 消息提示 */
+.upload-btn:disabled{
+  opacity:.6;
+  cursor:not-allowed;
+  transform:none;
+  box-shadow:none;
+}
+
 #message{
+  min-height: 22px;
   margin-top: 14px;
   text-align:center;
   font-size: 14px;
   color: var(--text);
 }
 
-/* 结果列表 */
+#message[data-tone="warning"]{
+  color:#b45309;
+}
+
+#message[data-tone="success"]{
+  color:#0f766e;
+}
+
 #resultList{
   margin-top: 10px;
   padding-left: 0;
   list-style: none;
 }
+
 #resultList li{
   margin-top: 6px;
   padding: 10px 12px;
@@ -206,9 +225,13 @@ input[type="file"]::-webkit-file-upload-button:hover{
   background: rgba(255,255,255,.55);
   border: 1px solid rgba(140,160,210,.18);
   font-size: 13px;
+  word-break: break-word;
 }
 
-/* 链接区 */
+#resultList a{
+  word-break: break-all;
+}
+
 .centered-link{
   margin-top: 18px;
   text-align:center;
@@ -235,22 +258,6 @@ input[type="file"]::-webkit-file-upload-button:hover{
   box-shadow: 0 10px 18px rgba(35,50,90,.10);
 }
 
-/* 说明小字 */
-.hint-text{
-  margin-top: 10px;
-  text-align:center;
-  font-size: 11px;
-  color: rgba(107,111,134,.85);
-}
-
-/* 图标 */
-.github-icon{
-  width: 20px;
-  height: 20px;
-  margin-right: 6px;
-  vertical-align: middle;
-}
-
 .folder-grid{
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -270,6 +277,7 @@ input[type="file"]::-webkit-file-upload-button:hover{
   cursor: pointer;
   text-align: center;
   transition: transform .12s ease, box-shadow .2s ease, border-color .2s ease, background .2s ease;
+  touch-action: manipulation;
 }
 
 .folder-btn:hover{
@@ -299,7 +307,6 @@ input[type="file"]::-webkit-file-upload-button:hover{
   color: rgba(107,111,134,.92);
 }
 
-/* 批量预览 */
 .batch-preview{
   margin-top: 14px;
   background: rgba(255,255,255,.55);
@@ -307,18 +314,21 @@ input[type="file"]::-webkit-file-upload-button:hover{
   border-radius: 14px;
   padding: 12px 12px;
 }
+
 .preview-title{
   font-size: 13px;
   color: rgba(43,45,58,.85);
   margin-bottom: 8px;
   font-weight: 700;
 }
+
 .preview-list{
   list-style: none;
   padding-left: 0;
   max-height: 180px;
   overflow: auto;
 }
+
 .preview-list li{
   display:flex;
   justify-content: space-between;
@@ -331,13 +341,13 @@ input[type="file"]::-webkit-file-upload-button:hover{
   font-size: 13px;
   color: rgba(43,45,58,.92);
 }
+
 .preview-list .meta{
   color: rgba(107,111,134,.75);
   font-size: 12px;
   white-space: nowrap;
 }
 
-/* 进度条 */
 .progress-wrap{
   margin-top: 14px;
   padding: 12px 12px;
@@ -379,19 +389,83 @@ input[type="file"]::-webkit-file-upload-button:hover{
   transition: width .18s ease;
 }
 
-/* 响应式 */
-@media (max-width: 600px){
-  .container{ padding: 20px 16px; border-radius: 20px; }
-  h1{ font-size: 20px; }
-  .upload-btn{ padding: 12px 14px; font-size: 15px; }
-  input[type="text"], input[type="file"]{ padding: 11px 11px; font-size: 13px; }
+body.mobile-layout{
+  min-height:100dvh;
+  align-items:flex-start;
+  padding:
+    max(14px, env(safe-area-inset-top))
+    max(12px, env(safe-area-inset-right))
+    max(18px, env(safe-area-inset-bottom))
+    max(12px, env(safe-area-inset-left));
+}
 
-  /* 小屏三按钮可能太挤：允许换行（可选） */
-  .btn-row{ flex-wrap: wrap; }
-  .btn-row .upload-btn{ min-width: 150px; }
-  .folder-grid{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
+body.mobile-layout .container{
+  max-width:100%;
+  padding: 20px 16px;
+  border-radius: 20px;
+}
+
+body.mobile-layout h1{
+  font-size: 20px;
+}
+
+body.mobile-layout input[type="text"],
+body.mobile-layout input[type="file"]{
+  min-height: 48px;
+  padding: 11px;
+  font-size: 16px;
+}
+
+body.mobile-layout .btn-row{
+  display:grid;
+  grid-template-columns:1fr;
+}
+
+body.mobile-layout .upload-btn{
+  width:100%;
+  min-height: 48px;
+  padding: 12px 14px;
+  font-size: 15px;
+}
+
+body.mobile-layout .folder-grid{
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+body.mobile-layout .progress-top{
+  flex-direction:column;
+}
+
+body.mobile-layout .progress-file{
+  max-width:100%;
+  white-space:normal;
+}
+
+body.mobile-layout .preview-list li,
+body.mobile-layout #resultList li{
+  flex-direction:column;
+}
+
+body.mobile-layout .preview-list .meta{
+  white-space:normal;
+}
+
+body.mobile-layout .centered-link{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  text-align:left;
+}
+
+body.mobile-layout .centered-link a{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  min-height: 42px;
 }
 
 @media (max-width: 420px){
-  .folder-grid{ grid-template-columns: 1fr; }
+  body.mobile-layout .folder-grid,
+  body.mobile-layout .centered-link{
+    grid-template-columns:1fr;
+  }
 }

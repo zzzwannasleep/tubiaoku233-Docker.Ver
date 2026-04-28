@@ -2,10 +2,10 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
   <title>{{ library_title }} 管理后台</title>
   <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}" type="image/png">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/manage.css') }}?v=20260427A">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/manage.css') }}?v=20260428B">
 </head>
 
 <body class="m-body">
@@ -40,21 +40,27 @@
 
     <section class="m-card hidden" id="panel">
       <div class="m-bar">
-        <div class="m-row">
-          <input class="m-input" id="q" placeholder="搜索名称 / 文件名 / 分类"/>
+        <div class="m-toolbar">
+          <div class="m-search-row">
+            <input class="m-input" id="q" placeholder="搜索名称 / 文件名 / 分类"/>
+            <button class="m-btn" id="btnLoad">刷新</button>
+          </div>
 
-          <button class="m-btn ghost" id="btnPrev">上一页</button>
-          <span class="pill" id="pageInfo">Page -</span>
-          <button class="m-btn ghost" id="btnNext">下一页</button>
+          <div class="m-pager-row">
+            <button class="m-btn ghost" id="btnPrev">上一页</button>
+            <span class="pill" id="pageInfo">Page -</span>
+            <button class="m-btn ghost" id="btnNext">下一页</button>
+            <span class="pill pill-label">跳到</span>
+            <input class="m-input m-input--jump" id="jump" placeholder="页码"/>
+            <button class="m-btn ghost" id="btnJump">跳转</button>
+          </div>
 
-          <span class="pill">跳到</span>
-          <input class="m-input" id="jump" style="max-width:120px;min-width:120px;flex:0;" placeholder="页码"/>
-          <button class="m-btn ghost" id="btnJump">跳转</button>
-
-          <button class="m-btn" id="btnLoad">刷新</button>
-          <button class="m-btn danger" id="btnBulk">批量删除</button>
-          <button class="m-btn ghost" id="btnLogout">退出</button>
+          <div class="m-action-row">
+            <button class="m-btn danger" id="btnBulk">批量删除</button>
+            <button class="m-btn ghost" id="btnLogout">退出</button>
+          </div>
         </div>
+
         <div class="m-meta">
           <span class="pill" id="catalogInfo"></span>
           <span class="pill" id="storageInfo"></span>
@@ -78,6 +84,8 @@
           <tbody id="rows"></tbody>
         </table>
       </div>
+
+      <div class="m-mobile-list" id="mobileRows"></div>
 
       <div class="m-foot">
         支持按名称、文件名、分类搜索。若需要固定完整外链，请在部署时设置 `PUBLIC_BASE_URL`。
@@ -114,13 +122,37 @@
   const loginCard = document.getElementById("loginCard");
   const panel = document.getElementById("panel");
   const rows = document.getElementById("rows");
+  const mobileRows = document.getElementById("mobileRows");
   const pageInfo = document.getElementById("pageInfo");
   const catalogInfo = document.getElementById("catalogInfo");
   const storageInfo = document.getElementById("storageInfo");
+  const selectedIndexes = new Set();
 
   let currentItems = [];
   let currentPage = 1;
   let lastPage = 1;
+
+  function escapeHtml(value) {
+    return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    }[char]));
+  }
+
+  function syncSelectionState(index, checked) {
+    if (checked) {
+      selectedIndexes.add(index);
+    } else {
+      selectedIndexes.delete(index);
+    }
+
+    document.querySelectorAll(`input[data-select="${index}"]`).forEach((input) => {
+      input.checked = checked;
+    });
+  }
 
   async function login() {
     const password = document.getElementById("pwd").value;
@@ -150,37 +182,107 @@
   }
 
   function getSelected() {
-    return Array.from(document.querySelectorAll("input[data-idx]"))
-      .filter((item) => item.checked)
-      .map((item) => currentItems[Number(item.dataset.idx)]);
+    return Array.from(selectedIndexes)
+      .sort((a, b) => a - b)
+      .map((index) => currentItems[index])
+      .filter(Boolean);
   }
 
   function render(items) {
     rows.innerHTML = "";
+    if (mobileRows) mobileRows.innerHTML = "";
     currentItems = items || [];
+    selectedIndexes.clear();
+
+    if (!currentItems.length) {
+      rows.innerHTML = `<tr><td colspan="7"><div class="m-empty">没有符合条件的记录。</div></td></tr>`;
+      if (mobileRows) {
+        mobileRows.innerHTML = `<div class="m-empty">没有符合条件的记录。</div>`;
+      }
+      return;
+    }
 
     currentItems.forEach((item, index) => {
-      const tr = document.createElement("tr");
-      const fileCell = item.filename
-        ? `<span class="mono">${item.filename}</span><div class="mini">${item.path || ""}</div>`
-        : `<span class="tag bad">外部记录</span>`;
-      const stateCell = item.exists
+      const safeUrl = escapeHtml(item.url || "");
+      const safeCategory = escapeHtml(item.category_label || item.category || "-");
+      const safeFilename = escapeHtml(item.filename || "");
+      const safePath = escapeHtml(item.path || "");
+      const safeName = escapeHtml(item.icon_name || "未命名图标");
+      const previewAlt = escapeHtml(item.icon_name || item.filename || "图标预览");
+      const stateTag = item.exists
         ? `<span class="tag ok">文件存在</span>`
         : `<span class="tag bad">文件缺失</span>`;
+      const fileCell = item.filename
+        ? `<span class="mono">${safeFilename}</span><div class="mini">${safePath}</div>`
+        : `<span class="tag bad">外部记录</span>`;
+      const previewCell = item.url
+        ? `<img class="thumb" loading="lazy" src="${safeUrl}" alt="${previewAlt}"/>`
+        : `<div class="thumb thumb--empty">暂无预览</div>`;
+      const urlCell = item.url
+        ? `<a class="a" href="${safeUrl}" target="_blank">${safeUrl}</a>`
+        : `<span class="mini">无外链</span>`;
 
+      const tr = document.createElement("tr");
       tr.innerHTML = `
-        <td><input class="chk" type="checkbox" data-idx="${index}"/></td>
-        <td>${item.url ? `<img class="thumb" loading="lazy" src="${item.url}" alt="img"/>` : ""}</td>
-        <td>${item.url ? `<a class="a" href="${item.url}" target="_blank">${item.url}</a>` : ""}</td>
-        <td><span class="tag ok">${item.category_label || item.category || "-"}</span><div class="mini">${stateCell}</div></td>
-        <td>${fileCell}</td>
-        <td>${item.icon_name || ""}</td>
-        <td><button class="m-btn tiny danger" data-del="${index}">删除</button></td>
+        <td data-label="选择"><input class="chk" type="checkbox" data-select="${index}"/></td>
+        <td data-label="预览">${previewCell}</td>
+        <td data-label="URL">${urlCell}</td>
+        <td data-label="分类"><span class="tag ok">${safeCategory}</span><div class="mini">${stateTag}</div></td>
+        <td data-label="文件">${fileCell}</td>
+        <td data-label="名称">${safeName}</td>
+        <td data-label="操作"><button class="m-btn tiny danger" data-del="${index}">删除</button></td>
       `;
       rows.appendChild(tr);
+
+      if (mobileRows) {
+        const article = document.createElement("article");
+        article.className = "m-item-card";
+        article.innerHTML = `
+          <div class="m-item-top">
+            <label class="m-checkline">
+              <input class="chk" type="checkbox" data-select="${index}"/>
+              <span>选择记录</span>
+            </label>
+            <button class="m-btn tiny danger" data-del="${index}">删除</button>
+          </div>
+
+          <div class="m-item-preview">${previewCell}</div>
+
+          <div class="m-item-body">
+            <div class="m-item-title">${safeName}</div>
+            <div class="m-item-grid">
+              <div class="m-field">
+                <span class="m-field-label">分类</span>
+                <div class="m-field-value">
+                  <span class="tag ok">${safeCategory}</span>
+                  <div class="mini">${stateTag}</div>
+                </div>
+              </div>
+
+              <div class="m-field">
+                <span class="m-field-label">文件</span>
+                <div class="m-field-value">${fileCell}</div>
+              </div>
+
+              <div class="m-field m-field--full">
+                <span class="m-field-label">URL</span>
+                <div class="m-field-value">${urlCell}</div>
+              </div>
+            </div>
+          </div>
+        `;
+        mobileRows.appendChild(article);
+      }
     });
 
-    rows.querySelectorAll("button[data-del]").forEach((btn) => {
+    document.querySelectorAll("input[data-select]").forEach((input) => {
+      input.addEventListener("change", () => {
+        const index = Number(input.dataset.select);
+        syncSelectionState(index, input.checked);
+      });
+    });
+
+    document.querySelectorAll("button[data-del]").forEach((btn) => {
       btn.onclick = async () => {
         const item = currentItems[Number(btn.dataset.del)];
         if (!item) return;
@@ -271,7 +373,7 @@
 
   document.getElementById("btnLogin").onclick = login;
   document.getElementById("btnLogout").onclick = logout;
-  document.getElementById("btnLoad").onclick = () => loadImages(false);
+  document.getElementById("btnLoad").onclick = () => loadImages(true);
   document.getElementById("btnBulk").onclick = bulkDelete;
 
   document.getElementById("pwd").addEventListener("keydown", (event) => {

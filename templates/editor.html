@@ -2,11 +2,11 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>{{ library_title }} 编辑器</title>
 
   <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}" type="image/png">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/editor.css') }}?v=20260428B">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/editor.css') }}?v=20260428C">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.css">
 </head>
 
@@ -31,6 +31,8 @@
         <button class="mini-btn" id="btnReset" type="button">清空并重置</button>
       </div>
     </header>
+
+    <div id="editorNotice" class="message-box is-empty editor-notice" aria-live="polite"></div>
 
     <div class="editor-layout">
       <aside class="editor-sidebar">
@@ -80,7 +82,7 @@
           </div>
 
           <button class="control-btn control-btn--accent control-btn--wide" id="btnAICutoutDefault" type="button">执行默认 AI 抠图</button>
-          <div id="aiMsg" class="message-box is-empty"></div>
+          <div id="aiMsg" class="message-box is-empty" aria-live="polite"></div>
           <p class="card-hint">会基于当前裁剪结果去除背景，并回到裁剪画布继续微调位置。</p>
         </section>
 
@@ -116,13 +118,13 @@
             <button class="control-btn" id="btnUploadTransparent" type="button">上传到透明分类</button>
           </div>
 
-          <div id="uploadMsg" class="message-box is-empty"></div>
+          <div id="uploadMsg" class="message-box is-empty" aria-live="polite"></div>
           <p class="card-hint">如果需要透明背景，建议先执行 AI 抠图再上传到透明分类。</p>
         </section>
       </aside>
 
       <main class="editor-workspace">
-        <section class="stage-card">
+        <section class="stage-card" id="stageCard">
           <div class="stage-header">
             <div>
               <p class="stage-eyebrow">实时画布</p>
@@ -138,13 +140,14 @@
           <div class="workspace-grid">
             <section class="canvas-card">
               <div id="cropWrap" class="stage-box" style="display:none;">
-                <img id="cropImage" alt="crop">
+                <img id="cropImage" alt="待裁剪图片">
               </div>
 
               <div id="emptyWrap" class="stage-empty">
                 <div class="empty-badge">ready</div>
                 <div class="empty-title">导入图片后开始处理</div>
-                <div class="empty-sub">右侧会显示裁剪画布，导出预览会出现在旁边的预览卡片里。</div>
+                <div class="empty-sub">手机端会优先展示画布区域，先选图，再往下调整和导出会更顺手。</div>
+                <label for="fileInput" class="stage-upload-link">选择图片开始</label>
               </div>
             </section>
 
@@ -159,7 +162,7 @@
 
               <div id="exportWrap" class="export-wrap">
                 <div id="exportEmpty" class="export-empty">导出后的图片会显示在这里，你可以右键或长按保存。</div>
-                <img id="exportImg" alt="export" style="display:none;">
+                <img id="exportImg" alt="导出预览" style="display:none;">
               </div>
             </aside>
           </div>
@@ -169,7 +172,7 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.js"></script>
-  <script src="{{ url_for('static', filename='js/editor.js') }}?v=20260428B"></script>
+  <script src="{{ url_for('static', filename='js/editor.js') }}?v=20260428C"></script>
   <script>
     const BG_API = "{{ bg_api }}";
     const bgEl = document.getElementById("aniBg");

@@ -2,9 +2,9 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>{{ library_title }}</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20260428A">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20260428C">
   <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}" type="image/png">
 </head>
 
@@ -41,8 +41,8 @@
 
     <div class="btn-row">
       <a class="upload-btn link-btn" href="/editor" target="_blank">图标编辑</a>
-      <button class="upload-btn" onclick="uploadSingle()">上传单张</button>
-      <button class="upload-btn" onclick="uploadBatch()">批量上传</button>
+      <button class="upload-btn" type="button" data-upload-action="single" onclick="uploadSingle()">上传单张</button>
+      <button class="upload-btn" type="button" data-upload-action="batch" onclick="uploadBatch()">批量上传</button>
     </div>
 
     <div id="progressWrap" class="progress-wrap" style="display:none;">
@@ -60,7 +60,7 @@
       <ul id="previewList" class="preview-list"></ul>
     </div>
 
-    <div id="message"></div>
+    <div id="message" aria-live="polite"></div>
     <ul id="resultList"></ul>
 
     <p class="centered-link">
@@ -74,6 +74,6 @@
     </p>
   </main>
 
-  <script src="{{ url_for('static', filename='js/script.js') }}?v=20260428A"></script>
+  <script src="{{ url_for('static', filename='js/script.js') }}?v=20260428C"></script>
 </body>
 </html>

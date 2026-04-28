@@ -9,6 +9,13 @@ function prettySize(bytes) {
   return `${(kb / 1024).toFixed(1)} MB`;
 }
 
+function setStatus(message = "", tone = "info") {
+  const messageDiv = document.getElementById("message");
+  if (!messageDiv) return;
+  messageDiv.textContent = message;
+  messageDiv.dataset.tone = message ? tone : "";
+}
+
 function hidePreview() {
   const previewBox = document.getElementById("batchPreview");
   const previewList = document.getElementById("previewList");
@@ -28,7 +35,19 @@ function hideProgress() {
   if (progressFile) progressFile.textContent = "";
 }
 
+function shouldUseMobileLayout() {
+  const ua = navigator.userAgent || navigator.vendor || "";
+  const mobileUa = /Android|webOS|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
+  const touchNarrowScreen = window.matchMedia("(pointer: coarse) and (max-width: 900px)").matches;
+  return mobileUa || touchNarrowScreen;
+}
+
+function syncDeviceLayout() {
+  document.body.classList.toggle("mobile-layout", shouldUseMobileLayout());
+}
+
 let currentCategory = "";
+let isUploading = false;
 
 function setCategory(category) {
   const buttons = Array.from(document.querySelectorAll(".folder-btn"));
@@ -59,25 +78,39 @@ function createFormData(files, name) {
   return formData;
 }
 
+function setUploadBusy(busy) {
+  isUploading = busy;
+
+  const nameInput = document.getElementById("name");
+  const imageInput = document.getElementById("image");
+  if (nameInput) nameInput.disabled = busy;
+  if (imageInput) imageInput.disabled = busy;
+
+  document.querySelectorAll("button[data-upload-action]").forEach((button) => {
+    button.disabled = busy;
+  });
+}
+
 async function uploadSingle() {
   const nameInput = document.getElementById("name");
   const imageInput = document.getElementById("image");
-  const messageDiv = document.getElementById("message");
   const resultList = document.getElementById("resultList");
 
-  if (!imageInput || !messageDiv) return;
+  if (!imageInput || isUploading) return;
   if (resultList) resultList.innerHTML = "";
 
   const file = imageInput.files[0];
   if (!file) {
-    messageDiv.textContent = "请选择一张图片。";
+    setStatus("请选择一张图片。", "warning");
     return;
   }
 
   const manualName = (nameInput?.value || "").trim();
   const formData = createFormData([file], manualName);
 
-  messageDiv.textContent = "正在上传...";
+  setUploadBusy(true);
+  setStatus("正在上传...", "info");
+
   try {
     const response = await fetch("/api/upload", {
       method: "POST",
@@ -86,7 +119,7 @@ async function uploadSingle() {
 
     const data = await response.json().catch(() => ({}));
     if (response.ok && data.success) {
-      messageDiv.textContent = `上传成功：${data.name}`;
+      setStatus(`上传成功：${data.name}`, "success");
       if (resultList) {
         resultList.innerHTML = `<li>✅ <b>${data.name}</b> → <a href="${data.url}" target="_blank">${data.url}</a></li>`;
       }
@@ -95,32 +128,33 @@ async function uploadSingle() {
       hidePreview();
       hideProgress();
     } else {
-      messageDiv.textContent = `错误：${data.error || `HTTP ${response.status}`}`;
+      setStatus(`错误：${data.error || `HTTP ${response.status}`}`, "warning");
     }
   } catch (error) {
-    messageDiv.textContent = `上传失败：${error.message}`;
+    setStatus(`上传失败：${error.message}`, "warning");
+  } finally {
+    setUploadBusy(false);
   }
 }
 
 async function uploadBatch() {
   const imageInput = document.getElementById("image");
-  const messageDiv = document.getElementById("message");
   const resultList = document.getElementById("resultList");
   const progressWrap = document.getElementById("progressWrap");
   const progressText = document.getElementById("progressText");
   const progressFile = document.getElementById("progressFile");
   const progressFill = document.getElementById("progressFill");
 
-  if (!imageInput || !messageDiv) return;
+  if (!imageInput || isUploading) return;
   if (resultList) resultList.innerHTML = "";
 
   const files = Array.from(imageInput.files || []);
   if (!files.length) {
-    messageDiv.textContent = "请选择图片（可多选）。";
+    setStatus("请选择图片（可多选）。", "warning");
     return;
   }
   if (files.length === 1) {
-    messageDiv.textContent = "如果只上传一张图，建议直接使用“上传单张”。";
+    setStatus("如果只上传一张图，建议直接使用“上传单张”。", "warning");
     return;
   }
 
@@ -137,6 +171,7 @@ async function uploadBatch() {
   if (progressFill) progressFill.style.width = "0%";
   if (progressText) progressText.textContent = `0/${files.length}`;
   if (progressFile) progressFile.textContent = "";
+  setUploadBusy(true);
 
   try {
     for (let index = 0; index < files.length; index += 1) {
@@ -147,7 +182,7 @@ async function uploadBatch() {
       if (progressText) progressText.textContent = `${index}/${files.length}`;
       if (progressFill) progressFill.style.width = `${Math.round((index / files.length) * 100)}%`;
 
-      messageDiv.textContent = `批量上传中 ${index + 1}/${files.length}: ${file.name}`;
+      setStatus(`批量上传中 ${index + 1}/${files.length}: ${file.name}`, "info");
 
       const formData = createFormData([file], name);
       const response = await fetch("/api/upload", {
@@ -167,13 +202,15 @@ async function uploadBatch() {
       if (progressFill) progressFill.style.width = `${Math.round((done / files.length) * 100)}%`;
     }
 
-    messageDiv.textContent = `批量上传完成：${files.length}/${files.length}`;
+    setStatus(`批量上传完成：${files.length}/${files.length}`, "success");
     imageInput.value = "";
     setTimeout(() => hideProgress(), 1000);
     hidePreview();
   } catch (error) {
-    messageDiv.textContent = `批量上传失败：${error.message}`;
+    setStatus(`批量上传失败：${error.message}`, "warning");
     hideProgress();
+  } finally {
+    setUploadBusy(false);
   }
 }
 
@@ -221,15 +258,20 @@ async function uploadBatch() {
     document.body.style.backgroundSize = "cover";
     document.body.style.backgroundPosition = "center";
     document.body.style.backgroundRepeat = "no-repeat";
-    document.body.style.backgroundAttachment = "fixed";
+    document.body.style.backgroundAttachment = shouldUseMobileLayout() ? "scroll" : "fixed";
   }
 
   document.body.style.backgroundImage = backgrounds.join(",");
-})();
+}
+)();
 
 window.addEventListener("DOMContentLoaded", () => {
+  syncDeviceLayout();
   document.querySelectorAll(".folder-btn").forEach((button) => {
     button.addEventListener("click", () => setCategory(button.dataset.category));
   });
   setCategory(document.querySelector(".folder-btn")?.dataset.category || "circle");
 });
+
+window.addEventListener("resize", syncDeviceLayout);
+window.addEventListener("orientationchange", syncDeviceLayout);

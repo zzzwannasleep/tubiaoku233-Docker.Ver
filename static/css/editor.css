@@ -31,7 +31,8 @@ html{
 
 body{
   margin: 0;
-  min-height: 100vh;
+  min-height: 100dvh;
+  overflow-x: hidden;
   color: var(--text);
   font-family: "Segoe UI Variable Display", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   background:
@@ -67,6 +68,7 @@ body{
 .editor-shell{
   width: min(1680px, calc(100% - 32px));
   margin: 16px auto;
+  padding-bottom: max(0px, env(safe-area-inset-bottom));
 }
 
 .editor-topbar{
@@ -87,12 +89,19 @@ body{
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
+}
+
+.topbar-right{
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .topbar-copy{
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
 }
 
 .topbar-eyebrow,
@@ -118,6 +127,7 @@ body{
 .topbar-title{
   font-size: clamp(1.2rem, 1.1rem + 0.5vw, 1.55rem);
   font-weight: 750;
+  text-wrap: balance;
 }
 
 .topbar-back,
@@ -126,7 +136,7 @@ body{
   align-items: center;
   justify-content: center;
   gap: 8px;
-  min-height: 42px;
+  min-height: 44px;
   padding: 0 16px;
   border-radius: 999px;
   border: 1px solid var(--line);
@@ -136,6 +146,7 @@ body{
   font-size: 14px;
   font-weight: 600;
   transition: transform 0.18s ease, border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+  touch-action: manipulation;
 }
 
 .topbar-back:hover,
@@ -153,6 +164,10 @@ body{
 
 .mini-btn{
   cursor: pointer;
+}
+
+.editor-notice{
+  margin-top: 14px;
 }
 
 .editor-layout{
@@ -328,7 +343,7 @@ body{
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 46px;
+  min-height: 48px;
   padding: 0 14px;
   border: 1px solid rgba(112, 128, 154, 0.18);
   border-radius: 14px;
@@ -338,6 +353,7 @@ body{
   font-weight: 680;
   cursor: pointer;
   transition: transform 0.18s ease, border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease, color 0.2s ease;
+  touch-action: manipulation;
 }
 
 .control-btn:hover{
@@ -522,6 +538,30 @@ input[type="text"]:focus{
   line-height: 1.7;
 }
 
+.stage-upload-link{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  margin-top: 18px;
+  padding: 0 18px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(41, 98, 255, 0.14), rgba(41, 98, 255, 0.06));
+  border: 1px solid rgba(41, 98, 255, 0.18);
+  color: var(--accent-strong);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.2s ease, background 0.2s ease;
+  touch-action: manipulation;
+}
+
+.stage-upload-link:hover{
+  transform: translateY(-1px);
+  background: linear-gradient(135deg, rgba(41, 98, 255, 0.18), rgba(41, 98, 255, 0.08));
+  box-shadow: var(--shadow-sm);
+}
+
 .preview-card{
   padding: 18px;
 }
@@ -555,6 +595,8 @@ input[type="text"]:focus{
   display: block;
   width: 100%;
   height: auto;
+  max-height: 360px;
+  object-fit: contain;
   background: transparent;
 }
 
@@ -594,6 +636,14 @@ input[type="text"]:focus{
     grid-template-columns: 1fr;
   }
 
+  .editor-workspace{
+    order: 1;
+  }
+
+  .editor-sidebar{
+    order: 2;
+  }
+
   .topbar-left,
   .topbar-right,
   .stage-header{
@@ -616,6 +666,24 @@ input[type="text"]:focus{
     border-radius: 20px;
   }
 
+  .editor-topbar{
+    align-items: flex-start;
+  }
+
+  .topbar-left,
+  .topbar-right{
+    width: 100%;
+  }
+
+  .topbar-right{
+    justify-content: stretch;
+  }
+
+  .topbar-back,
+  .mini-btn{
+    flex: 1 1 180px;
+  }
+
   .control-grid--2{
     grid-template-columns: 1fr;
   }
@@ -624,7 +692,11 @@ input[type="text"]:focus{
   .mini-btn,
   .control-btn,
   input[type="text"]{
-    min-height: 44px;
+    min-height: 46px;
+  }
+
+  .stage-copy{
+    max-width: none;
   }
 
   .canvas-card{
@@ -634,10 +706,54 @@ input[type="text"]:focus{
   .stage-box,
   .stage-empty{
     min-height: 420px;
-    padding: 14px;
+    padding: 16px;
   }
 
   .export-empty{
     min-height: 220px;
+  }
+}
+
+@media (max-width: 560px){
+  .topbar-left{
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .topbar-right{
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .topbar-back,
+  .mini-btn,
+  .stage-upload-link{
+    width: 100%;
+  }
+
+  .card-head,
+  .stage-header{
+    flex-direction: column;
+  }
+
+  .canvas-card{
+    min-height: 360px;
+  }
+
+  .stage-box,
+  .stage-empty{
+    min-height: 320px;
+  }
+
+  .empty-sub{
+    font-size: 13px;
+  }
+
+  .export-empty{
+    min-height: 180px;
+  }
+
+  #exportImg{
+    max-height: 280px;
   }
 }
