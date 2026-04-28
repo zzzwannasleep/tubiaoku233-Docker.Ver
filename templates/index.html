@@ -21,10 +21,8 @@
           type="button"
           data-category="{{ category.key }}"
           data-label="{{ category.label }}"
-          data-json="{{ category.json_file }}"
         >
           <div class="folder-title">{{ category.label }}</div>
-          <div class="folder-sub">{{ category.json_file }}</div>
         </button>
         {% endfor %}
       </div>
@@ -73,10 +71,6 @@
       {% if admin_enabled %}
       <a href="/manage" target="_blank">管理后台</a>
       {% endif %}
-    </p>
-
-    <p class="hint-text">
-      如果你需要稳定的完整外链，请在部署时设置 `PUBLIC_BASE_URL`。
     </p>
   </main>
 

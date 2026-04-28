@@ -254,18 +254,21 @@ input[type="file"]::-webkit-file-upload-button:hover{
 .folder-grid{
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+  gap: 10px;
 }
 
 .folder-btn{
+  display:flex;
+  align-items:center;
+  justify-content:center;
   appearance: none;
   border: 1px solid rgba(140,160,210,.22);
   background: rgba(255,255,255,.58);
-  border-radius: 16px;
-  padding: 12px 12px;
-  min-height: 92px;
+  border-radius: 14px;
+  padding: 10px 14px;
+  min-height: 68px;
   cursor: pointer;
-  text-align: left;
+  text-align: center;
   transition: transform .12s ease, box-shadow .2s ease, border-color .2s ease, background .2s ease;
 }
 
@@ -283,15 +286,10 @@ input[type="file"]::-webkit-file-upload-button:hover{
 }
 
 .folder-title{
+  width: 100%;
   font-weight: 800;
   letter-spacing: .2px;
-}
-
-.folder-sub{
-  margin-top: 4px;
-  font-size: 12px;
-  color: rgba(107,111,134,.85);
-  word-break: break-all;
+  text-align: center;
 }
 
 .folder-current{
