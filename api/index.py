@@ -10,7 +10,6 @@ from io import BytesIO
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
-import requests
 from dotenv import load_dotenv
 from flask import (
     Flask,
@@ -63,8 +62,6 @@ ADMIN_COOKIE_MAX_AGE = env_int("ADMIN_COOKIE_MAX_AGE", 86400)
 ADMIN_PAGE_SIZE = max(1, env_int("ADMIN_PAGE_SIZE", 24))
 REMBG_ENABLED = env_bool("REMBG_ENABLED", True)
 REMBG_MODEL = (os.getenv("REMBG_MODEL", "u2netp") or "u2netp").strip()
-CUSTOM_AI_ENABLED = env_bool("CUSTOM_AI_ENABLED", False)
-CUSTOM_AI_PASSWORD = (os.getenv("CUSTOM_AI_PASSWORD", "") or "").strip()
 
 max_upload_mb = env_int("MAX_UPLOAD_MB", 20)
 if max_upload_mb > 0:
@@ -555,27 +552,6 @@ def call_rembg_remove_bg(image):
     raise Exception("rembg 返回了无法识别的结果类型")
 
 
-def call_custom_remove_bg(image):
-    custom_url = (os.getenv("CUSTOM_AI_URL", "") or "").strip()
-    if not custom_url:
-        raise Exception("CUSTOM_AI_URL 未配置")
-
-    file_field = (os.getenv("CUSTOM_AI_FILE_FIELD", "image") or "image").strip()
-    auth_header = (os.getenv("CUSTOM_AI_AUTH_HEADER", "Authorization") or "Authorization").strip()
-    auth_prefix = (os.getenv("CUSTOM_AI_AUTH_PREFIX", "") or "").strip()
-    api_key = (os.getenv("CUSTOM_AI_API_KEY", "") or "").strip()
-
-    headers = {}
-    if api_key:
-        headers[auth_header] = f"{auth_prefix}{api_key}"
-
-    files = {file_field: (image.filename, image.stream, image.mimetype)}
-    response = requests.post(custom_url, headers=headers, files=files, timeout=90)
-    if response.status_code != 200:
-        raise Exception(f"Custom AI error: {response.status_code}")
-    return response.content
-
-
 # ===== bootstrap =====
 
 ensure_storage()
@@ -658,7 +634,6 @@ def legacy_github_route():
 def editor():
     return render_template(
         "editor.html",
-        custom_ai_enabled=CUSTOM_AI_ENABLED,
         admin_enabled=ADMIN_ENABLED,
         bg_api=RANDOM_BG_API,
         library_title=LIBRARY_TITLE,
@@ -842,36 +817,6 @@ def api_ai_cutout_default():
         return Response(call_rembg_remove_bg(image), mimetype="image/png")
     except Exception as exc:
         return jsonify({"error": "AI 抠图失败", "details": str(exc)}), 500
-
-
-@app.post("/api/ai/custom/auth")
-def api_custom_ai_auth():
-    if not CUSTOM_AI_ENABLED:
-        return jsonify({"error": "未启用"}), 403
-
-    data = request.get_json(silent=True) or {}
-    if (data.get("password") or "").strip() != CUSTOM_AI_PASSWORD:
-        return jsonify({"error": "密码错误"}), 403
-
-    response = jsonify({"success": True})
-    set_signed_cookie(response, "custom_ai_auth", {"ok": 1}, 86400)
-    return response
-
-
-@app.post("/api/ai_cutout_custom")
-def api_ai_cutout_custom():
-    try:
-        if not CUSTOM_AI_ENABLED:
-            return jsonify({"error": "未启用"}), 403
-        if not check_signed_cookie("custom_ai_auth", 86400):
-            return jsonify({"error": "未解锁"}), 403
-
-        image = request.files.get("image")
-        if not image:
-            return jsonify({"error": "缺少图片"}), 400
-        return Response(call_custom_remove_bg(image), mimetype="image/png")
-    except Exception as exc:
-        return jsonify({"error": "自定义 AI 失败", "details": str(exc)}), 500
 
 
 if __name__ == "__main__":

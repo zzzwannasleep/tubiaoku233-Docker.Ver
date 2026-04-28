@@ -573,7 +573,7 @@ function resetAll() {
   showOnly("empty");
 }
 
-/* ========== AI Cutout (default + custom mode2) ========== */
+/* ========== AI Cutout ========== */
 
 async function aiCutout(endpoint) {
   const msgEl = el("aiMsg");
@@ -621,30 +621,6 @@ async function aiCutout(endpoint) {
   if (msgEl) msgEl.textContent = "✅ AI 抠图完成：已回到裁剪模式（可继续裁剪/导出/一键上传）";
 }
 
-async function unlockCustomAI() {
-  const msgEl = el("aiMsg");
-  const pwd = prompt("请输入自定义AI解锁密码：");
-  if (!pwd) return;
-
-  if (msgEl) msgEl.textContent = "验证密码中...";
-
-  const res = await fetch("/api/ai/custom/auth", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password: pwd }),
-  });
-
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok || !data.success) {
-    if (msgEl) msgEl.textContent = `❌ 解锁失败：${data.error || `HTTP ${res.status}`}`;
-    return;
-  }
-
-  if (msgEl) msgEl.textContent = "✅ 自定义AI已解锁（本浏览器 1 天有效）";
-  const btn = el("btnAICutoutCustom");
-  if (btn) btn.style.display = "block";
-}
-
 /* ========== Bind events ========== */
 
 window.addEventListener("DOMContentLoaded", () => {
@@ -690,11 +666,8 @@ window.addEventListener("DOMContentLoaded", () => {
   el("btnUploadCircle")?.addEventListener("click", uploadCircleToLibrary);
   el("btnUploadTransparent")?.addEventListener("click", uploadTransparentToLibrary);
 
-
-// AI cutout
-el("btnAICutoutDefault")?.addEventListener("click", () => aiCutout("/api/ai_cutout"));
-el("btnUnlockCustomAI")?.addEventListener("click", unlockCustomAI);
-el("btnAICutoutCustom")?.addEventListener("click", () => aiCutout("/api/ai_cutout_custom"));
+  // AI cutout
+  el("btnAICutoutDefault")?.addEventListener("click", () => aiCutout("/api/ai_cutout"));
 
   el("btnReset")?.addEventListener("click", resetAll);
 

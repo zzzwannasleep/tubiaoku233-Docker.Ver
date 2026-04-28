@@ -119,25 +119,18 @@ http://127.0.0.1:8000
 | `ADMIN_PAGE_SIZE` | `24` | 管理后台分页大小 |
 | `RANDOM_BG_API` | 空 | 可选的背景图 API |
 
-### AI 抠图可选
+### AI 抠图
 
 | 变量 | 说明 |
 | --- | --- |
 | `REMBG_ENABLED` | 是否启用本地 `rembg` 抠图，默认 `1` |
 | `REMBG_MODEL` | 默认模型名，默认 `u2netp` |
 | `U2NET_HOME` | 可选，自定义 `rembg` 模型缓存目录 |
-| `CUSTOM_AI_ENABLED` | 是否启用自定义 AI |
-| `CUSTOM_AI_PASSWORD` | 自定义 AI 解锁密码 |
-| `CUSTOM_AI_URL` | 自定义 AI 接口地址 |
-| `CUSTOM_AI_FILE_FIELD` | 上传字段名，默认 `image` |
-| `CUSTOM_AI_API_KEY` | 自定义 AI 接口鉴权 Key |
-| `CUSTOM_AI_AUTH_HEADER` | 鉴权 Header，默认 `Authorization` |
-| `CUSTOM_AI_AUTH_PREFIX` | 鉴权前缀，比如 `Bearer ` |
 
 ### rembg 说明
 
 - 默认镜像会在构建阶段预热 `u2netp` 模型
-- 默认 `/api/ai_cutout` 走本地 `rembg`，不再调用外部抠图 API
+- 默认 `/api/ai_cutout` 走本地 `rembg`
 - 如果你改了 `REMBG_MODEL`，运行时可能会首次下载对应模型
 - 本地直接运行时，默认模型目录会落在 `data/.u2net`
 - 如果你手动设置了 `U2NET_HOME`，就会改用你指定的目录

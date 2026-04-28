@@ -103,28 +103,13 @@
       <div class="panel-block">
         <div class="panel-title">6) AI 抠图</div>
         <div class="btn-col">
-          <button class="tool-btn" id="btnAICutoutDefault">本地 AI 抠图（rembg）</button>
-
-          {% if custom_ai_enabled %}
-          <button class="tool-btn" id="btnUnlockCustomAI">解锁自定义 AI</button>
-          <button class="tool-btn" id="btnAICutoutCustom" style="display:none;">自定义 AI 抠图</button>
-          {% endif %}
+          <button class="tool-btn" id="btnAICutoutDefault">AI抠图</button>
         </div>
         <div id="aiMsg" class="upload-msg"></div>
 
         <div class="panel-hint">
-          默认使用本地 `rembg` 模型，不再依赖第三方抠图 API。
+          使用本地模型执行抠图，不依赖第三方抠图 API。
         </div>
-
-        {% if custom_ai_enabled %}
-        <div class="panel-hint">
-          自定义 AI 已启用，请通过 `CUSTOM_AI_*` 环境变量配置接口地址和鉴权信息。
-        </div>
-        {% else %}
-        <div class="panel-hint">
-          如需自定义 AI，请设置 `CUSTOM_AI_ENABLED=1` 并补齐 `CUSTOM_AI_*` 环境变量。
-        </div>
-        {% endif %}
       </div>
 
       <div class="panel-block">
