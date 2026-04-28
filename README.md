@@ -1,16 +1,15 @@
 # tubiaoku233
 
-这个项目已经从原来的 `Vercel + GitHub Gist + GitHub Repo / PICUI` 绑定模式，改造成了更通用的 **本地文件存储 + 本地 JSON 索引 + Docker 部署** 方案。
+这是一个面向自托管的图标库项目，提供 **本地文件存储 + 本地 JSON 索引 + Docker 部署**，并支持图片上传、编辑、抠图和后台管理。
 
-现在它的核心行为是：
+项目提供以下能力：
 
 - 上传图片后，文件保存在本地目录
-- `icons.json` / `icons-square.json` / `icons-circle.json` / `icons-transparent.json` 由当前服务直接生成
-- `/manage` 直接管理本地文件和本地 JSON 记录
-- 默认 AI 抠图改为本地 `rembg`
-- 不再依赖 `vercel.json`
-- 不再依赖 GitHub Gist 作为索引存储
-- 不再依赖 GitHub Repo 作为图床
+- 自动生成 `icons.json` / `icons-square.json` / `icons-circle.json` / `icons-transparent.json`
+- 提供 `icons-all.json` 聚合全部图标数据
+- 提供 `/manage` 管理后台，直接管理本地文件和 JSON 记录
+- 内置基于本地 `rembg` 的 AI 抠图能力
+- 支持 Docker / Docker Compose 自托管部署
 
 ## 目录结构
 
@@ -89,6 +88,7 @@ http://127.0.0.1:8000
 | `/manage` | 管理后台 |
 | `/media/<path>` | 本地图片访问地址 |
 | `/icons.json` | 默认分类 JSON |
+| `/icons-all.json` | 聚合所有分类的 JSON |
 | `/icons-square.json` | 方形分类 JSON |
 | `/icons-circle.json` | 圆形分类 JSON |
 | `/icons-transparent.json` | 透明分类 JSON |

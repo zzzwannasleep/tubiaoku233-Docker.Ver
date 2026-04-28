@@ -73,6 +73,8 @@ IMAGE_ROOT = DATA_DIR / "images"
 os.environ.setdefault("U2NET_HOME", str((DATA_DIR / ".u2net").resolve()))
 
 CATEGORY_ORDER = ["default", "square", "circle", "transparent"]
+UPLOAD_CATEGORY_ORDER = ["circle", "square", "transparent"]
+AGGREGATE_JSON_FILE = "icons-all.json"
 CATEGORY_CONFIG = {
     "default": {"json_file": "icons.json", "folder": "", "label": "默认"},
     "square": {"json_file": "icons-square.json", "folder": "square", "label": "方形"},
@@ -257,6 +259,30 @@ def catalog_for_response(category: str) -> dict:
         if not url:
             continue
         payload["icons"].append({"name": item.get("name") or "icon", "url": url})
+    return payload
+
+
+def aggregate_catalog_for_response() -> dict:
+    payload = {
+        "name": LIBRARY_TITLE,
+        "description": "",
+        "icons": [],
+    }
+
+    for category in CATEGORY_ORDER:
+        content = read_catalog(category)
+        for item in content.get("icons") or []:
+            url = item.get("url") or (build_media_url(item.get("path", "")) if item.get("path") else "")
+            if not url:
+                continue
+            payload["icons"].append(
+                {
+                    "name": item.get("name") or "icon",
+                    "url": url,
+                    "category": category,
+                }
+            )
+
     return payload
 
 
@@ -606,6 +632,14 @@ def icons_transparent_json():
     )
 
 
+@app.get(f"/{AGGREGATE_JSON_FILE}")
+def icons_all_json():
+    return Response(
+        json.dumps(aggregate_catalog_for_response(), ensure_ascii=False, indent=2),
+        mimetype="application/json",
+    )
+
+
 @app.get("/")
 def home():
     categories = [
@@ -614,13 +648,14 @@ def home():
             "label": CATEGORY_CONFIG[key]["label"],
             "json_file": CATEGORY_CONFIG[key]["json_file"],
         }
-        for key in CATEGORY_ORDER
+        for key in UPLOAD_CATEGORY_ORDER
     ]
     return render_template(
         "index.html",
         bg_api=RANDOM_BG_API,
         categories=categories,
         admin_enabled=ADMIN_ENABLED,
+        initial_category_label=categories[0]["label"] if categories else CATEGORY_CONFIG["default"]["label"],
         library_title=LIBRARY_TITLE,
     )
 

@@ -28,17 +28,24 @@ function hideProgress() {
   if (progressFile) progressFile.textContent = "";
 }
 
-let currentCategory = "default";
+let currentCategory = "";
 
 function setCategory(category) {
-  currentCategory = category || "default";
+  const buttons = Array.from(document.querySelectorAll(".folder-btn"));
+  const fallbackCategory = buttons[0]?.dataset.category || "circle";
+  currentCategory = category || fallbackCategory;
 
-  document.querySelectorAll(".folder-btn").forEach((button) => {
+  let active = buttons.find((button) => button.dataset.category === currentCategory) || null;
+  if (!active) {
+    currentCategory = fallbackCategory;
+    active = buttons[0] || null;
+  }
+
+  buttons.forEach((button) => {
     button.classList.toggle("active", button.dataset.category === currentCategory);
   });
 
   const current = document.getElementById("folderCurrent");
-  const active = document.querySelector(`.folder-btn[data-category="${currentCategory}"]`);
   if (current && active) {
     current.textContent = `当前分类：${active.dataset.label || currentCategory}`;
   }
@@ -224,5 +231,5 @@ window.addEventListener("DOMContentLoaded", () => {
   document.querySelectorAll(".folder-btn").forEach((button) => {
     button.addEventListener("click", () => setCategory(button.dataset.category));
   });
-  setCategory("default");
+  setCategory(document.querySelector(".folder-btn")?.dataset.category || "circle");
 });
