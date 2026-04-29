@@ -22,4 +22,4 @@ RUN mkdir -p /app/data/images/square /app/data/images/circle /app/data/images/tr
 
 EXPOSE 8000
 
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--threads", "4", "--timeout", "120", "--no-sendfile", "api.index:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--threads", "4", "--timeout", "120", "--no-sendfile", "--access-logfile", "-", "--error-logfile", "-", "--capture-output", "--log-level", "info", "api.index:app"]

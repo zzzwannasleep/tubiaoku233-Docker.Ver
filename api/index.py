@@ -26,6 +26,7 @@ from flask import (
     url_for,
 )
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -72,11 +73,15 @@ if max_upload_mb > 0:
 data_dir_raw = (os.getenv("APP_DATA_DIR", "") or "").strip()
 DATA_DIR = Path(data_dir_raw).expanduser().resolve() if data_dir_raw else (ROOT_DIR / "data").resolve()
 IMAGE_ROOT = DATA_DIR / "images"
-os.environ.setdefault("U2NET_HOME", str((DATA_DIR / ".u2net").resolve()))
+u2net_home_raw = (os.getenv("U2NET_HOME", "") or "").strip()
+if not u2net_home_raw or u2net_home_raw == "/opt/rembg-models":
+    u2net_home_raw = str((DATA_DIR / ".u2net").resolve())
+os.environ["U2NET_HOME"] = str(Path(u2net_home_raw).expanduser().resolve())
 
 CATEGORY_ORDER = ["default", "square", "circle", "transparent"]
 UPLOAD_CATEGORY_ORDER = ["circle", "square", "transparent"]
 AGGREGATE_JSON_FILE = "icons-all.json"
+MEDIA_URL_PREFIX = "/files"
 CATEGORY_CONFIG = {
     "default": {"json_file": "icons.json", "folder": "", "label": "默认"},
     "square": {"json_file": "icons-square.json", "folder": "square", "label": "方形"},
@@ -166,11 +171,12 @@ def extract_path_from_url(url: str) -> str:
         return ""
     parsed = urlparse(url)
     path = unquote(parsed.path or url)
-    marker = "/media/"
-    if marker in path:
-        return path.split(marker, 1)[1].lstrip("/")
-    if path.startswith("media/"):
-        return path[len("media/") :]
+    for marker in (f"{MEDIA_URL_PREFIX}/", "/media/"):
+        if marker in path:
+            return path.split(marker, 1)[1].lstrip("/")
+    for prefix in (MEDIA_URL_PREFIX.lstrip("/") + "/", "media/"):
+        if path.startswith(prefix):
+            return path[len(prefix) :]
     return ""
 
 
@@ -244,10 +250,10 @@ def build_media_url(rel_path: str) -> str:
     safe_path = safe_rel_path(rel_path)
     quoted_path = quote(safe_path, safe="/")
     if PUBLIC_BASE_URL:
-        return f"{PUBLIC_BASE_URL}/media/{quoted_path}"
+        return f"{PUBLIC_BASE_URL}{MEDIA_URL_PREFIX}/{quoted_path}"
     if has_request_context():
-        return request.url_root.rstrip("/") + url_for("serve_media", path=safe_path)
-    return f"/media/{quoted_path}"
+        return request.url_root.rstrip("/") + url_for("serve_media_file", path=safe_path)
+    return f"{MEDIA_URL_PREFIX}/{quoted_path}"
 
 
 def catalog_for_response(category: str) -> dict:
@@ -659,23 +665,37 @@ def healthz():
     return jsonify({"ok": True})
 
 
-@app.get("/media/<path:path>")
-def serve_media(path: str):
+def _build_media_response(path: str):
     try:
         safe_path = safe_rel_path(path)
         target = resolve_media_path(safe_path)
         if not target.is_file():
+            app.logger.warning("media miss path=%s resolved=%s", safe_path, target)
             abort(404)
 
         mimetype = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+        app.logger.info("media hit path=%s resolved=%s size=%s", safe_path, target, target.stat().st_size)
         response = Response(target.read_bytes(), mimetype=mimetype)
         response.content_length = target.stat().st_size
         response.last_modified = target.stat().st_mtime
         response.cache_control.public = True
         response.cache_control.max_age = 3600
         return response
-    except Exception:
+    except HTTPException:
+        raise
+    except Exception as exc:
+        app.logger.exception("media error path=%s error=%s", path, exc)
         abort(404)
+
+
+@app.get(f"{MEDIA_URL_PREFIX}/<path:path>")
+def serve_media_file(path: str):
+    return _build_media_response(path)
+
+
+@app.get("/media/<path:path>")
+def serve_media(path: str):
+    return _build_media_response(path)
 
 
 @app.get("/icons.json")
