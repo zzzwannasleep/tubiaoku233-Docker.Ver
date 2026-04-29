@@ -22,4 +22,4 @@ RUN mkdir -p /opt/rembg-models && python -c "from rembg import new_session; new_
 
 EXPOSE 8000
 
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--threads", "4", "--timeout", "120", "api.index:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--threads", "4", "--timeout", "120", "--no-sendfile", "api.index:app"]

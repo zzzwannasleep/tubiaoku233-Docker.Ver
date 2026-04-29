@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
+import mimetypes
 import os
 import re
 import threading
+import unicodedata
 from functools import wraps
 from io import BytesIO
 from pathlib import Path
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
 from dotenv import load_dotenv
 from flask import (
@@ -20,7 +23,6 @@ from flask import (
     redirect,
     render_template,
     request,
-    send_from_directory,
     url_for,
 )
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
@@ -81,6 +83,7 @@ CATEGORY_CONFIG = {
     "circle": {"json_file": "icons-circle.json", "folder": "circle", "label": "圆形"},
     "transparent": {"json_file": "icons-transparent.json", "folder": "transparent", "label": "透明"},
 }
+SAFE_STORAGE_PATH_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
 STORAGE_LOCK = threading.RLock()
 REMBG_SESSION_LOCK = threading.RLock()
 REMBG_SESSION = None
@@ -162,7 +165,7 @@ def extract_path_from_url(url: str) -> str:
     if not url:
         return ""
     parsed = urlparse(url)
-    path = parsed.path or url
+    path = unquote(parsed.path or url)
     marker = "/media/"
     if marker in path:
         return path.split(marker, 1)[1].lstrip("/")
@@ -323,6 +326,24 @@ def sanitize_filename_base(name: str) -> str:
     return base or "image"
 
 
+def build_storage_filename_base(name: str) -> str:
+    base = sanitize_filename_base(name)
+    ascii_base = unicodedata.normalize("NFKD", base).encode("ascii", "ignore").decode("ascii")
+    ascii_base = re.sub(r"[^A-Za-z0-9._-]+", "_", ascii_base)
+    ascii_base = re.sub(r"_+", "_", ascii_base)
+    ascii_base = ascii_base.strip("._-").lower()
+    if ascii_base:
+        return ascii_base[:80]
+
+    digest = hashlib.sha1(base.encode("utf-8")).hexdigest()[:12]
+    return f"image_{digest}"
+
+
+def is_storage_path_ascii_safe(rel_path: str) -> bool:
+    safe_path = safe_rel_path(rel_path)
+    return bool(safe_path) and bool(SAFE_STORAGE_PATH_RE.fullmatch(safe_path))
+
+
 def unique_media_rel_path_unlocked(base: str, ext: str, category: str) -> str:
     folder = category_config(category)["folder"]
     for index in range(1000):
@@ -332,6 +353,53 @@ def unique_media_rel_path_unlocked(base: str, ext: str, category: str) -> str:
         if not resolve_media_path(rel_path).exists():
             return rel_path
     raise Exception("文件重名过多，无法生成唯一文件名")
+
+
+def migrate_legacy_media_paths() -> None:
+    with STORAGE_LOCK:
+        for category in CATEGORY_ORDER:
+            content = read_catalog_unlocked(category)
+            changed = False
+            migrated_icons = []
+
+            for item in content.get("icons") or []:
+                updated = dict(item)
+                rel_path = safe_rel_path(item.get("path", ""))
+                if not rel_path or is_storage_path_ascii_safe(rel_path):
+                    migrated_icons.append(updated)
+                    continue
+
+                try:
+                    source = resolve_media_path(rel_path)
+                except Exception:
+                    migrated_icons.append(updated)
+                    continue
+
+                if not source.exists():
+                    migrated_icons.append(updated)
+                    continue
+
+                ext = Path(rel_path).suffix.lower()
+                if not re.fullmatch(r"\.[a-z0-9]{1,8}", ext or ""):
+                    ext = ".png"
+
+                name_hint = item.get("name") or Path(rel_path).stem or "image"
+                new_rel_path = unique_media_rel_path_unlocked(
+                    build_storage_filename_base(str(name_hint)),
+                    ext,
+                    category,
+                )
+                target = resolve_media_path(new_rel_path)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                source.replace(target)
+
+                updated["path"] = new_rel_path
+                migrated_icons.append(updated)
+                changed = True
+
+            if changed:
+                content["icons"] = migrated_icons
+                write_catalog_unlocked(category, content)
 
 
 def save_local_upload(image, desired_name: str, category: str) -> dict:
@@ -350,7 +418,7 @@ def save_local_upload(image, desired_name: str, category: str) -> dict:
     with STORAGE_LOCK:
         content = read_catalog_unlocked(category)
         final_name = get_unique_name(name, content)
-        rel_path = unique_media_rel_path_unlocked(sanitize_filename_base(final_name), ext, category)
+        rel_path = unique_media_rel_path_unlocked(build_storage_filename_base(final_name), ext, category)
         target = resolve_media_path(rel_path)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(raw_bytes)
@@ -581,6 +649,7 @@ def call_rembg_remove_bg(image):
 # ===== bootstrap =====
 
 ensure_storage()
+migrate_legacy_media_paths()
 
 
 # ===== routes =====
@@ -594,8 +663,17 @@ def healthz():
 def serve_media(path: str):
     try:
         safe_path = safe_rel_path(path)
-        resolve_media_path(safe_path)
-        return send_from_directory(IMAGE_ROOT, safe_path)
+        target = resolve_media_path(safe_path)
+        if not target.is_file():
+            abort(404)
+
+        mimetype = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+        response = Response(target.read_bytes(), mimetype=mimetype)
+        response.content_length = target.stat().st_size
+        response.last_modified = target.stat().st_mtime
+        response.cache_control.public = True
+        response.cache_control.max_age = 3600
+        return response
     except Exception:
         abort(404)
 
