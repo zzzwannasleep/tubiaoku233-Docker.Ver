@@ -23,6 +23,7 @@ from flask import (
     redirect,
     render_template,
     request,
+    send_file,
     url_for,
 )
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
@@ -65,6 +66,7 @@ ADMIN_COOKIE_MAX_AGE = env_int("ADMIN_COOKIE_MAX_AGE", 86400)
 ADMIN_PAGE_SIZE = max(1, env_int("ADMIN_PAGE_SIZE", 24))
 REMBG_ENABLED = env_bool("REMBG_ENABLED", True)
 REMBG_MODEL = (os.getenv("REMBG_MODEL", "u2netp") or "u2netp").strip()
+REMBG_MAX_CONCURRENCY = max(1, env_int("REMBG_MAX_CONCURRENCY", 1))
 
 max_upload_mb = env_int("MAX_UPLOAD_MB", 20)
 if max_upload_mb > 0:
@@ -91,11 +93,16 @@ CATEGORY_CONFIG = {
 SAFE_STORAGE_PATH_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
 STORAGE_LOCK = threading.RLock()
 REMBG_SESSION_LOCK = threading.RLock()
+REMBG_JOB_SLOTS = threading.BoundedSemaphore(REMBG_MAX_CONCURRENCY)
 REMBG_SESSION = None
 REMBG_SESSION_MODEL = None
 
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev_secret_change_me")
 serializer = URLSafeTimedSerializer(app.secret_key)
+
+
+class ServiceBusyError(Exception):
+    pass
 
 
 def normalize_category(raw: str | None) -> str:
@@ -642,7 +649,15 @@ def call_rembg_remove_bg(image):
     except ImportError as exc:
         raise Exception("rembg 未安装，请先安装 requirements.txt 里的依赖") from exc
 
-    output = remove(raw_bytes, session=get_rembg_session())
+    if not REMBG_JOB_SLOTS.acquire(blocking=False):
+        app.logger.warning("rembg busy max_concurrency=%s", REMBG_MAX_CONCURRENCY)
+        raise ServiceBusyError("AI 抠图任务繁忙，请稍后再试")
+
+    try:
+        output = remove(raw_bytes, session=get_rembg_session())
+    finally:
+        REMBG_JOB_SLOTS.release()
+
     if isinstance(output, bytes):
         return output
     if hasattr(output, "save"):
@@ -673,13 +688,18 @@ def _build_media_response(path: str):
             app.logger.warning("media miss path=%s resolved=%s", safe_path, target)
             abort(404)
 
+        stat_result = target.stat()
         mimetype = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
-        app.logger.info("media hit path=%s resolved=%s size=%s", safe_path, target, target.stat().st_size)
-        response = Response(target.read_bytes(), mimetype=mimetype)
-        response.content_length = target.stat().st_size
-        response.last_modified = target.stat().st_mtime
+        app.logger.info("media hit path=%s resolved=%s size=%s", safe_path, target, stat_result.st_size)
+        response = send_file(
+            target,
+            mimetype=mimetype,
+            conditional=True,
+            etag=True,
+            last_modified=stat_result.st_mtime,
+            max_age=3600,
+        )
         response.cache_control.public = True
-        response.cache_control.max_age = 3600
         return response
     except HTTPException:
         raise
@@ -948,6 +968,8 @@ def api_ai_cutout_default():
         if not image:
             return jsonify({"error": "缺少图片"}), 400
         return Response(call_rembg_remove_bg(image), mimetype="image/png")
+    except ServiceBusyError as exc:
+        return jsonify({"error": "AI 抠图服务繁忙", "details": str(exc)}), 503
     except Exception as exc:
         return jsonify({"error": "AI 抠图失败", "details": str(exc)}), 500
 
